@@ -1197,3 +1197,17 @@ test("issue #399 billing summary regression is classified and exercised by targe
     /unclassified changes/,
   );
 });
+
+test("#399 §15 unsaved navigation hook always runs its dedicated RTL Fast Fix regression", () => {
+  const paths = [
+    "packages/resourceportal-web/src/hooks/use-unsaved-form-guard.ts",
+    "packages/resourceportal-web/src/hooks/use-unsaved-form-guard.test.tsx",
+  ];
+  const plan = selectProfiles(paths);
+  for (const profile of ["reactive-web-state", "tenant-ux-patch", "security"]) {
+    assert.ok(plan.profiles.includes(profile), profile);
+  }
+  const commands = commandsForProfiles(plan.profiles).map(command => command.join(" "));
+  assert.ok(commands.some(command => command.includes("src/hooks/use-unsaved-form-guard.test.tsx")));
+  assert.ok(commands.some(command => command.includes("src/pages/app-group/app-edit.test.tsx")));
+});
