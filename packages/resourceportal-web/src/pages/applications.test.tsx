@@ -1,12 +1,31 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ApplicationsPage, appGroupMatchesSearch } from "./applications";
+import { ApplicationsPage, appGroupAttentionReasons, appGroupMatchesSearch } from "./applications";
 
 function json(value: unknown) { return new Response(JSON.stringify(value), { status: 200, headers: { "content-type": "application/json" } }); }
 const groups = [
   { id: "ag1", name: "commerce-prod", singleApps: [{ id: "a1" }, { id: "a2" }], effectiveRuntimeState: "Running", runtimeState: "Running", health: "Healthy", currentDeploymentVersion: 12, hasPendingChanges: false, updatedAt: "2026-09-13T18:00:00Z" },
   { id: "ag2", name: "sandbox", singleApps: [], effectiveRuntimeState: "Stopped", runtimeState: "Stopped", health: "Unknown", currentDeploymentVersion: null, hasPendingChanges: true, updatedAt: "2026-09-12T10:00:00Z" },
 ];
+
+describe("#399 §13 application inventory and attention semantics", () => {
+  it("does not call an intentionally stopped, healthy zero-replica group unhealthy", () => {
+    expect(appGroupAttentionReasons({ effectiveRuntimeState: "Stopped", health: "Healthy", runtimeBlockers: ["AppGroupStopped"] })).toEqual([]);
+    expect(appGroupAttentionReasons({ effectiveRuntimeState: "Running", health: "Unhealthy", hasPendingChanges: true })).toEqual(["Health: unhealthy", "Undeployed draft changes"]);
+    expect(appGroupAttentionReasons({ effectiveRuntimeState: "Stopped", runtimeBlockers: ["BillingSuspended", "AppGroupStopped"] })).toEqual(["Runtime blocked: BillingSuspended"]);
+  });
+  it("shows individual applications separately with tenant-scoped links", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json([{ id: "ag1", name: "commerce", singleApps: [{ id: "a1", name: "checkout", runtimeState: "Running" }] }])));
+    render(<ApplicationsPage tenantId="t1" />);
+    await screen.findByText("commerce");
+    fireEvent.click(screen.getByRole("button", { name: "Applications" }));
+    expect(screen.getByText("checkout")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Open application" }).getAttribute("href")).toBe("/tenants/t1/app-groups/ag1/apps/a1");
+    expect(screen.queryByRole("textbox", { name: "Search App Groups" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "App Groups" }));
+    expect(screen.getByRole("textbox", { name: "Search App Groups" })).toBeTruthy();
+  });
+});
 
 describe("ApplicationsPage", () => {
   beforeEach(() => vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json(groups))));
