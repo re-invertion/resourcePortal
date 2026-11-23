@@ -60,7 +60,7 @@ describe("DCR real HTTP fault injection (#213)", () => {
     expect(created).toBe(1);
   });
 
-  it("compensates real HTTP registration when management fails and DELETE confirms cleanup", async () => {
+  it.each(["https", "http"])("compensates real HTTP registration with %s issuer-host metadata and DELETE confirms cleanup", async (scheme) => {
     const calls: string[] = [];
     let clientExists = false;
     const service = await withUpstream((req, res) => {
@@ -71,7 +71,7 @@ describe("DCR real HTTP fault injection (#213)", () => {
         res.writeHead(201).end(JSON.stringify({
           client_id: "synthetic-client",
           registration_access_token: "rollback-only-secret",
-          registration_client_uri: "https://auth-synthetic.invalid/oauth/v2/register/synthetic-client",
+          registration_client_uri: `${scheme}://auth-synthetic.invalid/oauth/v2/register/synthetic-client`,
         }));
       } else if (req.method === "POST" && req.url === "/management/v1/projects/_search") {
         expect(req.headers.authorization).toBe("Bearer synthetic-management-token");
