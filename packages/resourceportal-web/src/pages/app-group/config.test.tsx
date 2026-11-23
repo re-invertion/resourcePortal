@@ -56,7 +56,7 @@ it.each([
 });
 
 it("guards modified configuration edits against silent Cancel and route navigation", async () => {
-  const fetchMock = vi.fn(async () => json([]));
+  const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => json([]));
   vi.stubGlobal("fetch", fetchMock);
   const nativeConfirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   render(<><a href="/tenants/t1/app-groups/ag1/networking">Networking</a><AppGroupConfig tenantId="t1" appGroupId="ag1" /></>);
