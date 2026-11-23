@@ -461,3 +461,21 @@ it("retains edited environment text after rejected navigation and delayed rehydr
   expect(field).toHaveProperty("value","unsaved-new");
   confirm.mockRestore();
 });
+
+it("does not reset controlled environment input when native input and change events bubble", async () => {
+  vi.stubGlobal("fetch",vi.fn(async (input:RequestInfo|URL)=>{
+    const url=String(input);
+    if(url.endsWith("/single-apps"))return json([{id:"app1",name:"checkout",image:"nginx:latest",runtimeState:"Running"}]);
+    if(url.endsWith("/runtime-config"))return json({environment:{DATABASE_URL:"server-old"}});
+    if(url.endsWith("/gpu-devices"))return json({enabled:false,quota:0,devices:[]});
+    return json([]);
+  }));
+  render(<ApplicationEdit tenantId="t1" appGroupId="ag1" appId="app1" subsection="environment"/>);
+  const field=await screen.findByRole("textbox",{name:"Environment value 1"});
+  await waitFor(()=>expect(field).toHaveProperty("value","server-old"));
+  fireEvent.input(field,{target:{value:"typed-from-native-input"}});
+  fireEvent.change(field,{target:{value:"typed-from-native-input"}});
+  expect(field).toHaveProperty("value","typed-from-native-input");
+  await act(async()=>{await Promise.resolve();});
+  expect(field).toHaveProperty("value","typed-from-native-input");
+});
