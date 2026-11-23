@@ -54,7 +54,7 @@ describe("McpOAuthDcrService", () => {
     })[key]) } as unknown as ConfigService;
     const started = Date.now();
     await expect(new McpOAuthDcrService(config).register({})).rejects.toThrow(
-      "ZITADEL DCR upstream request unavailable or timed out",
+      "ZITADEL OAuth client registration may have been accepted",
     );
     expect(Date.now() - started).toBeLessThan(2500);
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -253,7 +253,7 @@ describe("McpOAuthDcrService", () => {
       thrown = error;
     }
     expect(thrown).toBeDefined();
-    expect(String(thrown)).toContain("ZITADEL DCR upstream request unavailable or timed out");
+    expect(String(thrown)).toContain("ZITADEL OAuth client registration may have been accepted");
     expect(String(thrown)).not.toContain("sensitive-secret");
     expect(String(thrown)).not.toContain("http://zitadel:8080");
     expect(fetchMock).toHaveBeenCalledTimes(1);
