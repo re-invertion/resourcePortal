@@ -127,3 +127,27 @@ it("disables Discard changes when the App Group has no pending changes", () => {
 
   expect((screen.getByRole("button", { name: "Discard changes" }) as HTMLButtonElement).disabled).toBe(true);
 });
+it("shows readable header status badges while retaining raw values for runtime controls", () => {
+  render(
+    <AppGroupLayout
+      tenantId="t1"
+      group={{
+        id: "ag1", name: "Commerce",
+        runtimeState: "PENDING_DEPLOYMENT", effectiveRuntimeState: "STARTING_UP",
+        health: "HEALTH_CHECK_PENDING", driftStatus: "OUT_OF_SYNC",
+        hasPendingChanges: false,
+      }}
+      section="overview"
+      onReload={vi.fn(async () => undefined)}
+    >
+      <p>Overview</p>
+    </AppGroupLayout>,
+  );
+  for (const friendly of ["Starting up", "Health check pending", "Out of sync"]) {
+    expect(screen.getByText(friendly)).toBeTruthy();
+  }
+  for (const raw of ["STARTING_UP", "HEALTH_CHECK_PENDING", "OUT_OF_SYNC"]) {
+    expect(screen.queryByText(raw)).toBeNull();
+  }
+  expect((screen.getByRole("button", {name: /Restart/}) as HTMLButtonElement).disabled).toBe(true);
+});

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ApplicationEdit } from "./app-edit";
 
@@ -46,6 +46,8 @@ it("lists existing configuration attachments and detaches them by attachment id"
 
   render(<ApplicationEdit tenantId="t1" appGroupId="ag1" appId="app1" subsection="configuration" />);
 
+  expect(await screen.findByRole("heading",{name:"checkout",level:1})).toBeTruthy();
+  expect(screen.getByRole("main")).toBeTruthy();
   expect(await screen.findByText("Current attachments")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Detach DATABASE_URL" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Detach DATABASE_URL" }));
@@ -230,7 +232,7 @@ it("#399 §5 discloses unsupported failure-action changes and the supported draf
     if (path.endsWith("/single-apps") && (!init?.method || init.method === "GET")) {
       return json([{
         id: "app1", name: "runner", image: "nginx:latest",
-        updatePolicy: { parallelism: 1, delaySeconds: 10, order: "start-first" },
+        updatePolicy: { parallelism: 3, delaySeconds: 10, order: "start-first" },
       }]);
     }
     if (path.endsWith("/single-apps/app1") && init?.method === "PATCH") {
@@ -249,7 +251,9 @@ it("#399 §5 discloses unsupported failure-action changes and the supported draf
   expect(limitation.textContent).toContain("deploy the App Group");
   expect(screen.queryByRole("combobox", { name: /Failure action/i })).toBeNull();
 
+  await waitFor(() => expect((screen.getByRole("spinbutton", { name: "Update parallelism" }) as HTMLInputElement).value).toBe("3"));
   fireEvent.change(screen.getByRole("spinbutton", { name: "Update parallelism" }), { target: { value: "2" } });
+  expect((screen.getByRole("spinbutton", { name: "Update parallelism" }) as HTMLInputElement).value).toBe("2");
   fireEvent.click(screen.getByRole("button", { name: "Save advanced settings" }));
   await waitFor(() => expect(patches).toHaveLength(1));
   expect(patches[0].updatePolicy).toMatchObject({ parallelism: 2, delaySeconds: 10, order: "start-first" });
@@ -311,4 +315,167 @@ it("rejects an enabled health check without a command", async () => {
   expect(await screen.findByRole("textbox", { name: "Health check shell command" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Save advanced settings" }));
   expect(patches).toHaveLength(0);
+});
+
+
+it("warns before leaving a dirty application form and clears the guard after successful save", async () => {
+  const confirm = vi.fn(() => false);
+  vi.stubGlobal("confirm", confirm);
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith("/single-apps") && (!init?.method || init.method === "GET"))
+      return json([{ id: "app1", name: "checkout", image: "nginx:latest", description: "" }]);
+    if (url.endsWith("/single-apps/app1") && init?.method === "PATCH") return json({});
+    if (url.endsWith("/runtime-config")) return json({ environment: {} });
+    return json([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<ApplicationEdit tenantId="t1" appGroupId="ag1" appId="app1" subsection="basics" />);
+  const field = await screen.findByDisplayValue("checkout");
+  fireEvent.change(field, { target: { value: "checkout-updated" } });
+  expect(await screen.findByText(/Your edits have not been saved/)).toBeTruthy();
+  const overview = screen.getByRole("link", { name: "Overview" });
+  expect(fireEvent.click(overview)).toBe(false);
+  expect(confirm).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(fetchMock.mock.calls.some(([url, init]) =>
+    String(url).endsWith("/single-apps/app1") && init?.method === "PATCH")).toBe(true));
+  await waitFor(() => expect(screen.queryByText(/Your edits have not been saved/)).toBeNull());
+  expect(fireEvent.click(overview)).toBe(true);
+  expect(confirm).toHaveBeenCalledTimes(1);
+});
+
+it("protects removal-only environment changes even without an input event", async () => {
+  const confirm = vi.fn(() => false);
+  vi.stubGlobal("confirm", confirm);
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/single-apps")) return json([{ id: "app1", name: "checkout", image: "nginx:latest" }]);
+    if (url.endsWith("/runtime-config")) return json({ environment: { TO_REMOVE: "old" } });
+    return json([]);
+  }));
+  render(<ApplicationEdit tenantId="t1" appGroupId="ag1" appId="app1" subsection="environment" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Remove" }));
+  expect(await screen.findByText(/Your edits have not been saved/)).toBeTruthy();
+  expect(fireEvent.click(screen.getByRole("link", { name: "Overview" }))).toBe(false);
+  expect(confirm).toHaveBeenCalledTimes(1);
+});
+
+
+it("protects removal-only advanced command edits without an input event", async () => {
+  const confirm = vi.fn(() => false);
+  vi.stubGlobal("confirm", confirm);
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/single-apps")) return json([{
+      id: "app1", name: "checkout", image: "nginx:latest", command: ["--serve"],
+    }]);
+    if (url.endsWith("/runtime-config")) return json({ environment: {} });
+    return json([]);
+  }));
+  render(<ApplicationEdit tenantId="t1" appGroupId="ag1" appId="app1" subsection="advanced" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Remove argument 1" }));
+  expect(await screen.findByText(/Your edits have not been saved/)).toBeTruthy();
+  expect(fireEvent.click(screen.getByRole("link", { name: "Overview" }))).toBe(false);
+  expect(confirm).toHaveBeenCalledTimes(1);
+});
+
+it("distinguishes HTTP endpoint API failures from a valid empty application list", async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/single-apps")) return json([{ id: "app1", name: "checkout", image: "nginx:latest" }]);
+    if (url.endsWith("/single-apps/app1/http-endpoints")) return json({ message: "Backend temporarily unavailable" }, 503);
+    return json([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  render(<ApplicationEdit tenantId="t1" appGroupId="ag1" appId="app1" subsection="networking" />);
+  expect(await screen.findByText("HTTP endpoints unavailable")).toBeTruthy();
+  expect(screen.queryByText("No HTTP endpoints configured for this application.")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Retry endpoints" }));
+  await waitFor(() => expect(fetchMock.mock.calls.filter(([path]) =>
+    String(path).endsWith("/single-apps/app1/http-endpoints")).length).toBeGreaterThanOrEqual(2));
+});
+
+it("blocks editing while environment loads and preserves unseen server keys on save", async () => {
+  let completeRuntime!: (value: Response) => void;
+  const pendingRuntime = new Promise<Response>(resolve => { completeRuntime = resolve; });
+  const patches: Array<Record<string, unknown>> = [];
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith("/single-apps")) return json([{
+      id: "app1", name: "checkout", image: "nginx:latest", runtimeState: "Running"
+    }]);
+    if (url.endsWith("/runtime-config") && init?.method === "PATCH") {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      patches.push(body);
+      return json({ environment: body.environment });
+    }
+    if (url.endsWith("/runtime-config")) return pendingRuntime;
+    if (url.endsWith("/gpu-devices")) return json({ enabled: false, quota: 0, devices: [] });
+    return json([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<ApplicationEdit tenantId="t1" appGroupId="ag1" appId="app1" subsection="environment" />);
+  await screen.findByRole("heading", { name: "checkout", level: 1 });
+  const addVariable = screen.getByRole("button", { name: "Add variable" }) as HTMLButtonElement;
+  const save = screen.getByRole("button", { name: "Save environment" }) as HTMLButtonElement;
+  expect(addVariable.disabled).toBe(true);
+  expect(save.disabled).toBe(true);
+  fireEvent.click(addVariable);
+  expect(screen.queryByRole("textbox", { name: "Environment name 1" })).toBeNull();
+  await act(async () => {
+    completeRuntime(json({ environment: { DATABASE_URL: "server-old" } }));
+    await pendingRuntime;
+  });
+  await waitFor(() => expect(addVariable.disabled).toBe(false));
+  expect(screen.getByRole("textbox", { name: "Environment name 1" })).toHaveProperty("value", "DATABASE_URL");
+  fireEvent.click(addVariable);
+  fireEvent.change(screen.getByRole("textbox", { name: "Environment name 2" }), { target: { value: "NEW_KEY" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Environment value 2" }), { target: { value: "new-local-value" } });
+  expect(screen.getByText("Unsaved form changes")).toBeTruthy();
+  fireEvent.click(save);
+  await waitFor(() => expect(patches).toHaveLength(1));
+  expect(patches[0].environment).toEqual({ DATABASE_URL: "server-old", NEW_KEY: "new-local-value" });
+});
+
+it("retains edited environment text after rejected navigation and delayed rehydration", async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/single-apps")) return json([{id:"app1",name:"checkout",image:"nginx:latest",runtimeState:"Running"}]);
+    if (url.endsWith("/runtime-config")) return json({environment:{DATABASE_URL:"server-old"}});
+    if (url.endsWith("/gpu-devices")) return json({enabled:false,quota:0,devices:[]});
+    return json([]);
+  });
+  vi.stubGlobal("fetch",fetchMock);
+  const confirm = vi.spyOn(window,"confirm").mockReturnValue(false);
+  render(<ApplicationEdit tenantId="t1" appGroupId="ag1" appId="app1" subsection="environment" />);
+  const field = await screen.findByRole("textbox",{name:"Environment value 1"});
+  await waitFor(()=>expect(field).toHaveProperty("value","server-old"));
+  fireEvent.change(field,{target:{value:"unsaved-new"}});
+  expect(screen.getByText("Unsaved form changes")).toBeTruthy();
+  fireEvent.click(screen.getByRole("navigation",{name:"Application sections"}).getElementsByTagName("a")[0]);
+  expect(confirm).toHaveBeenCalled();
+  expect(field).toHaveProperty("value","unsaved-new");
+  await act(async()=>{await Promise.resolve();});
+  expect(field).toHaveProperty("value","unsaved-new");
+  confirm.mockRestore();
+});
+
+it("does not reset controlled environment input when native input and change events bubble", async () => {
+  vi.stubGlobal("fetch",vi.fn(async (input:RequestInfo|URL)=>{
+    const url=String(input);
+    if(url.endsWith("/single-apps"))return json([{id:"app1",name:"checkout",image:"nginx:latest",runtimeState:"Running"}]);
+    if(url.endsWith("/runtime-config"))return json({environment:{DATABASE_URL:"server-old"}});
+    if(url.endsWith("/gpu-devices"))return json({enabled:false,quota:0,devices:[]});
+    return json([]);
+  }));
+  render(<ApplicationEdit tenantId="t1" appGroupId="ag1" appId="app1" subsection="environment"/>);
+  const field=await screen.findByRole("textbox",{name:"Environment value 1"});
+  await waitFor(()=>expect(field).toHaveProperty("value","server-old"));
+  fireEvent.input(field,{target:{value:"typed-from-native-input"}});
+  fireEvent.change(field,{target:{value:"typed-from-native-input"}});
+  expect(field).toHaveProperty("value","typed-from-native-input");
+  await act(async()=>{await Promise.resolve();});
+  expect(field).toHaveProperty("value","typed-from-native-input");
 });

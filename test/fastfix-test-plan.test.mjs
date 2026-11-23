@@ -1197,3 +1197,51 @@ test("issue #399 billing summary regression is classified and exercised by targe
     /unclassified changes/,
   );
 });
+
+test("#399 §15 unsaved navigation hook always runs its dedicated RTL Fast Fix regression", () => {
+  const paths = [
+    "packages/resourceportal-web/src/hooks/use-unsaved-form-guard.ts",
+    "packages/resourceportal-web/src/hooks/use-unsaved-form-guard.test.tsx",
+  ];
+  const plan = selectProfiles(paths);
+  for (const profile of ["reactive-web-state", "tenant-ux-patch", "security"]) {
+    assert.ok(plan.profiles.includes(profile), profile);
+  }
+  const commands = commandsForProfiles(plan.profiles).map(command => command.join(" "));
+  assert.ok(commands.some(command => command.includes("src/hooks/use-unsaved-form-guard.test.tsx")));
+  assert.ok(commands.some(command => command.includes("src/pages/app-group/app-edit.test.tsx")));
+});
+
+
+test("#399 §15 shared required/error Field semantics execute UI form RTL under protected Fast Fix", () => {
+  const plan = selectProfiles(["packages/resourceportal-web/src/components/design-system/forms.tsx"]);
+  for (const profile of ["reactive-web-state", "tenant-ux-patch", "security"]) {
+    assert.ok(plan.profiles.includes(profile), profile);
+  }
+  const commands = commandsForProfiles(plan.profiles).map(command => command.join(" "));
+  assert.ok(commands.some(command => command.includes("src/components/forms.test.tsx")));
+});
+
+test("#399 §15 explicitly gates all changed app-group resources and platform form files", () => {
+  const changed = [
+    "packages/resourceportal-web/src/pages/app-group/apps.tsx",
+    "packages/resourceportal-web/src/pages/app-group/apps.test.tsx",
+    "packages/resourceportal-web/src/pages/app-group/config.test.tsx",
+    "packages/resourceportal-web/src/pages/platform-dns.tsx",
+    "packages/resourceportal-web/src/pages/platform-dns.test.tsx",
+    "packages/resourceportal-web/src/pages/platform-settings.tsx",
+    "packages/resourceportal-web/src/pages/platform-settings.test.tsx",
+  ];
+  const plan = selectProfiles(changed);
+  for (const required of ["section15-form-reliability", "tenant-ux-patch", "applications", "platform-admin-ui", "security"]) {
+    assert.ok(plan.profiles.includes(required), required);
+  }
+  const commands = commandsForProfiles(plan.profiles).map(command => command.join(" "));
+  for (const required of ["src/pages/app-group/apps.test.tsx", "src/pages/app-group/config.test.tsx", "src/pages/platform-dns.test.tsx", "src/pages/platform-settings.test.tsx"]) {
+    assert.ok(commands.some(command => command.includes(required)), required);
+  }
+  assert.throws(
+    () => selectProfiles(["packages/resourceportal-web/src/pages/platform-secret-unreviewed.tsx"]),
+    /unclassified changes/,
+  );
+});

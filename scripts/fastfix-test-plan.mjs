@@ -62,7 +62,7 @@ const commands = {
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/volume-operation-tracker.test.ts", "src/pages/tenant-storage-pages.test.tsx"],
   ],
   "reactive-web-state": [
-    ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/App.test.tsx", "src/hooks/use-api.test.tsx", "src/pages/app-group/app-edit.test.tsx", "src/pages/app-group/application-runtime-fields.test.ts", "src/pages/billing-funding-ui.test.tsx", "src/pages/machine-credential-rotation.test.tsx"],
+    ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/App.test.tsx", "src/components/forms.test.tsx", "src/hooks/use-api.test.tsx", "src/hooks/use-unsaved-form-guard.test.tsx", "src/pages/app-group/app-edit.test.tsx", "src/pages/app-group/application-runtime-fields.test.ts", "src/pages/billing-funding-ui.test.tsx", "src/pages/machine-credential-rotation.test.tsx"],
   ],
   "storage-isolation": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/storage-backends/local-filesystem-storage-adapter.service.spec.ts"],
@@ -207,6 +207,15 @@ const commands = {
   "applications": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/app-groups/stage4-singleapp.spec.ts", "src/app-groups/sensitive-runtime-config.spec.ts", "src/app-groups/app-groups.view.spec.ts", "src/app-groups/single-app-logs.service.spec.ts", "src/app-groups/single-app-restart-dedup.spec.ts"],
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/app-group/app-detail.test.tsx", "src/pages/app-group/create-app-wizard.test.tsx"],
+  ],
+  // #399 §15: every changed app resource list and platform form must run its
+  // exact RTL regression; unknown neighboring files remain fail-closed.
+  "section15-form-reliability": [
+    ["npm", "--workspace", "@resource-portal/web", "test", "--",
+      "src/pages/app-group/apps.test.tsx",
+      "src/pages/app-group/config.test.tsx",
+      "src/pages/platform-dns.test.tsx",
+      "src/pages/platform-settings.test.tsx"],
   ],
   "tenant-ux-patch": [
     ["npm", "--workspace", "@resource-portal/web", "test", "--",
@@ -384,6 +393,8 @@ const classifiers = [
   [/^packages\/resourceportal-web\/src\/pages\/platform-billing\.tsx$/, ["billing-correctness", "platform-admin-ui", "security", "tenant-ux-patch"]],
   [/^packages\/resourceportal-web\/src\/pages\/tenant-resources\.tsx$/, ["billing-correctness", "reactive-web-state", "tenant-ux-patch"]],
   [/^packages\/resourceportal-web\/src\/lib\/date-display(?:\.test)?\.ts$/, ["tenant-ux-patch"]],
+  [/^packages\/resourceportal-web\/src\/components\/design-system\/forms\.tsx$/, ["reactive-web-state", "tenant-ux-patch", "security"]],
+  [/^packages\/resourceportal-web\/src\/hooks\/use-unsaved-form-guard(?:\.test)?\.tsx?$/, ["reactive-web-state", "tenant-ux-patch", "security"]],
   [/^packages\/resourceportal-web\/src\/hooks\/use-api\.ts$/, ["reactive-web-state", "tenant-ux-patch"]],
   // Explicit coverage for the tenant usability patch: new files must not
   // silently bypass fast-fix validation on non-milestone releases.
@@ -398,6 +409,10 @@ const classifiers = [
   // New syntax-aware config preview and MCP catalog safeguards must never
   // silently skip frontend regression checks on fast-fix releases.
   [/^packages\/resourceportal-web\/src\/pages\/app-group\/(?:config|config-code-preview\.test)\.tsx$/, ["tenant-ux-patch"]],
+  // #399 §15: strict explicit paths and exact RTL checks for list/config and
+  // platform DNS/SMTP fields. Keep unregistered variants fail-closed.
+  [/^packages\/resourceportal-web\/src\/pages\/app-group\/(?:apps|config)(?:\.test)?\.tsx$/, ["section15-form-reliability", "tenant-ux-patch", "applications"]],
+  [/^packages\/resourceportal-web\/src\/pages\/platform-(?:dns|settings)(?:\.test)?\.tsx$/, ["section15-form-reliability", "platform-admin-ui", "security"]],
   // Issue #399 follow-up: workspace navigation, search, deployment monitoring
   // and its new regression fixtures must participate in Fast Fix selection.
   [/^packages\/resourceportal-web\/src\/components\/shell\.test\.tsx$/, ["tenant-ux-patch", "tenant-access", "security"]],

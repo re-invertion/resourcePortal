@@ -232,7 +232,7 @@ async function createApplication(page, appGroupId, appGroupName, applicationName
       `/tenants/${state.tenantId}/app-groups/${appGroupId}/apps/[0-9a-f-]+$`,
     ),
   );
-  await page.getByRole("heading", { name: applicationName, level: 2 }).waitFor();
+  await page.getByRole("heading", { name: applicationName, level: 1 }).waitFor();
   assert(
     (await page.getByRole("navigation", { name: "App Group sections" }).count()) === 0,
     "Application detail must not be rendered inside the App Group workspace",

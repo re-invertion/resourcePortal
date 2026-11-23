@@ -5,6 +5,7 @@ import { Button, Callout, ConfirmActionButton, DeployIcon, LinkButton, PageHeade
 import { AppGroupIcon } from "../../components/application-icon";
 import { text } from "../../hooks/use-api";
 import { toast } from "../../components/toast";
+import { applicationStatusLabel } from "./application-runtime-fields";
 
 export type AppGroupRecord = Record<string, unknown>;
 
@@ -12,7 +13,7 @@ function blockers(value: unknown) { return Array.isArray(value) ? value.map(Stri
 function blockerCopy(code: string) { if (code === "BillingSuspended") return "The tenant balance is empty. Add credits before starting workloads."; if (code === "TenantSuspended") return "This tenant is suspended. Runtime operations are blocked."; if (code === "PlatformMaintenance") return "Platform maintenance is active. Runtime changes are temporarily blocked."; if (code === "AppGroupNotDeployed") return "Deploy the current workspace before starting this App Group."; if (code === "AppGroupError") return "The App Group is in an error state. Review the latest deployment and activity."; if (code === "AppGroupDeleting") return "This App Group is being deleted."; return code; }
 
 function StatusSummaryBadge({ label, value, help }: { label: string; value: string; help: string }) {
-  return <Tooltip content={help}><StatusBadge tone={statusTone(value)} className="!min-h-6 gap-1.5 px-2 text-[11px]"><span className="text-[10px] font-semibold uppercase tracking-[0.045em] opacity-70">{label}</span><span aria-hidden="true" className="h-3 w-px bg-current opacity-20"/><span className="font-semibold tracking-[-0.01em]">{value}</span></StatusBadge></Tooltip>;
+  return <Tooltip content={help}><StatusBadge tone={statusTone(value)} className="!min-h-6 gap-1.5 px-2 text-[11px]"><span className="text-[10px] font-semibold uppercase tracking-[0.045em] opacity-70">{label}</span><span aria-hidden="true" className="h-3 w-px bg-current opacity-20"/><span className="font-semibold tracking-[-0.01em]">{applicationStatusLabel(value)}</span></StatusBadge></Tooltip>;
 }
 
 export function AppGroupLayout({ tenantId, group, section, onReload, children }: { tenantId: string; group: AppGroupRecord; section: string; onReload: () => Promise<unknown>; children: ReactNode }) {

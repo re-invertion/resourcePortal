@@ -1,8 +1,43 @@
-import { forwardRef, type InputHTMLAttributes, type SelectHTMLAttributes, type TextareaHTMLAttributes, type ReactNode } from "react";
+import { cloneElement, forwardRef, isValidElement, useId, type InputHTMLAttributes, type SelectHTMLAttributes, type TextareaHTMLAttributes, type ReactElement, type ReactNode } from "react";
 import { SearchIcon } from "./icons";
 import { cx } from "./primitives";
 
-export function Field({ label, hint, error, required, children, className }: { label: string; hint?: ReactNode; error?: ReactNode; required?: boolean; children: ReactNode; className?: string }) { return <label className={cx("block min-w-0", className)}><span className={cx("mb-1.5 block text-[13px] font-medium text-[#172033]", !required && "after:ml-1 after:font-normal after:text-[#718096] after:content-['(optional)']")}>{label}{required ? <span className="ml-1 text-[#C42B1C]" aria-hidden="true">*</span> : null}</span>{children}{error ? <span className="mt-1 block text-xs text-[#C42B1C]">{error}</span> : hint ? <span className="mt-1 block text-xs leading-4 text-[#718096]">{hint}</span> : null}</label>; }
+type AccessibleFieldControlProps = {
+  required?: boolean;
+  "aria-required"?: boolean;
+  "aria-invalid"?: boolean;
+  "aria-describedby"?: string;
+};
+
+/** Visible required/optional guidance must also reach the actual control. */
+export function Field({ label, hint, error, required, children, className }: {
+  label: string; hint?: ReactNode; error?: ReactNode; required?: boolean; children: ReactNode; className?: string;
+}) {
+  const descriptionId = useId();
+  const isControl = isValidElement(children) && (
+    children.type === TextInput || children.type === NumberInput ||
+    children.type === Select || children.type === Textarea ||
+    (typeof children.type === "string" && ["input", "select", "textarea"].includes(children.type))
+  );
+  const control = isControl ? (() => {
+    const element = children as ReactElement<AccessibleFieldControlProps>;
+    const describedBy = [element.props["aria-describedby"], (error || hint) ? descriptionId : undefined]
+      .filter(Boolean).join(" ") || undefined;
+    return cloneElement(element, {
+      ...(required ? { required: true, "aria-required": true } : {}),
+      ...(error ? { "aria-invalid": true } : {}),
+      "aria-describedby": describedBy,
+    });
+  })() : children;
+  return <label className={cx("block min-w-0", className)}>
+    <span className={cx("mb-1.5 block text-[13px] font-medium text-[#172033]", !required && "after:ml-1 after:font-normal after:text-[#718096] after:content-['(optional)']")}>
+      {label}{required ? <span className="ml-1 text-[#C42B1C]" aria-hidden="true">*</span> : null}
+    </span>
+    {control}
+    {error ? <span id={descriptionId} role="alert" className="mt-1 block text-xs text-[#C42B1C]">{error}</span> :
+      hint ? <span id={descriptionId} className="mt-1 block text-xs leading-4 text-[#718096]">{hint}</span> : null}
+  </label>;
+}
 const inputClass = "h-10 w-full rounded-md border border-[#B9C5D6] bg-white px-3 text-sm text-[#172033] selection:bg-[#1769E0] selection:text-white shadow-[0_1px_1px_rgba(16,24,40,.02)] outline-none placeholder:text-[#8A96A8] focus:border-[#1769E0] focus:ring-2 focus:ring-[#1769E0]/15 user-invalid:border-[#C42B1C] user-invalid:ring-2 user-invalid:ring-[#C42B1C]/10 disabled:bg-[#F3F5F8] disabled:text-[#7B8798]";
 export const TextInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function TextInput({ className, ...props }, ref) { return <input ref={ref} className={cx(inputClass, className)} {...props}/>; });
 export const NumberInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function NumberInput({ className, ...props }, ref) { return <input ref={ref} type="number" className={cx(inputClass, className)} {...props}/>; });

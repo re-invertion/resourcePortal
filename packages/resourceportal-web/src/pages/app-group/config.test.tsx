@@ -28,3 +28,92 @@ describe("AppGroupConfig destructive actions", () => {
     await waitFor(() => expect(fetchMock.mock.calls.some(([path, init]) => String(path).endsWith("/variables/var1") && (init as RequestInit | undefined)?.method === "DELETE")).toBe(true));
   });
 });
+
+it.each([
+  ["variables", "Variables"],
+  ["secrets", "Secrets"],
+  ["configs", "Configs"],
+])("distinguishes failed %s loading from an empty list and retries", async (kind, title) => {
+  let requests = 0;
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const path = String(input);
+    if (path.endsWith(`/${kind}`)) {
+      requests++;
+      return requests === 1
+        ? json({ message: "service unavailable" }, 503)
+        : json([]);
+    }
+    return json([]);
+  }));
+  render(<AppGroupConfig tenantId="t1" appGroupId="ag1" />);
+  const errorText = `${title} could not be loaded. Existing items may still exist.`;
+  expect(await screen.findByText(errorText)).toBeTruthy();
+  expect(screen.queryByText(`No ${kind} yet`)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: `Retry ${kind}` }));
+  await waitFor(() => expect(requests).toBe(2));
+  expect(await screen.findByText(`No ${kind} yet`)).toBeTruthy();
+  expect(screen.queryByText(errorText)).toBeNull();
+});
+
+it("guards modified configuration edits against silent Cancel and route navigation", async () => {
+  const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => json([]));
+  vi.stubGlobal("fetch", fetchMock);
+  const nativeConfirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  render(<><a href="/tenants/t1/app-groups/ag1/networking">Networking</a><AppGroupConfig tenantId="t1" appGroupId="ag1" /></>);
+
+  fireEvent.click(screen.getAllByRole("button", { name: "Add" })[0]);
+  fireEvent.change(screen.getByRole("textbox", { name: /Name/ }), { target: { value: "DATABASE_URL" } });
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(nativeConfirm).toHaveBeenCalledWith("You have unsaved changes. Discard your edits?");
+  expect(screen.getByRole("textbox", { name: /Name/ })).toHaveProperty("value", "DATABASE_URL");
+
+  const link = screen.getByRole("link", { name: "Networking" });
+  fireEvent.click(link);
+  expect(nativeConfirm).toHaveBeenCalledWith("You have unsaved changes. Leave this page and discard your edits?");
+
+  nativeConfirm.mockReturnValue(true);
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("textbox", { name: /Name/ })).toBeNull();
+  expect(fetchMock.mock.calls.some(([, init]) => ["POST", "PATCH", "DELETE"].includes((init as RequestInit | undefined)?.method ?? ""))).toBe(false);
+  nativeConfirm.mockRestore();
+});
+
+it.each([
+  ["variables", 0, false],
+  ["secrets", 1, true],
+  ["configs", 2, false],
+] as const)("preserves valid empty values while enforcing new secret value for %s", async (kind, index, needsValue) => {
+  const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => json([]));
+  vi.stubGlobal("fetch", fetchMock);
+  render(<AppGroupConfig tenantId="t1" appGroupId="ag1" />);
+  fireEvent.click(screen.getAllByRole("button", { name: "Add" })[index]);
+  fireEvent.change(screen.getByRole("textbox", { name: /Name/ }), { target: { value: "entry" } });
+  const create = screen.getByRole("button", { name: "Create" }) as HTMLButtonElement;
+  const value = screen.getByRole("textbox", { name: kind === "configs" ? "Content" : "Value" });
+  expect(value.hasAttribute("required")).toBe(needsValue);
+  expect(value.getAttribute("aria-required")).toBe(needsValue ? "true" : null);
+  expect(create.disabled).toBe(needsValue);
+  if (needsValue) {
+    fireEvent.change(value, { target: { value: "secret-value" } });
+    expect(create.disabled).toBe(false);
+  }
+  fireEvent.click(create);
+  await waitFor(() => expect(fetchMock.mock.calls.some(([url, opts]) =>
+    String(url).endsWith(`/${kind}`) && opts?.method === "POST"
+  )).toBe(true));
+});
+
+it("prompts only once when multiple resource editors have unsaved changes", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => json([])));
+  const nativeConfirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+  render(<><a href="/tenants/t1/app-groups/ag1/networking">Networking</a><AppGroupConfig tenantId="t1" appGroupId="ag1" /></>);
+  const addButtons = screen.getAllByRole("button", { name: "Add" });
+  fireEvent.click(addButtons[0]);
+  fireEvent.click(addButtons[1]);
+  fireEvent.change(screen.getAllByRole("textbox", { name: /Name/ })[0], { target: { value: "FIRST" } });
+  fireEvent.change(screen.getAllByRole("textbox", { name: /Name/ })[1], { target: { value: "SECOND" } });
+  fireEvent.click(screen.getByRole("link", { name: "Networking" }));
+  expect(nativeConfirm).toHaveBeenCalledTimes(1);
+  expect(nativeConfirm).toHaveBeenCalledWith("You have unsaved changes. Leave this page and discard your edits?");
+  nativeConfirm.mockRestore();
+});
