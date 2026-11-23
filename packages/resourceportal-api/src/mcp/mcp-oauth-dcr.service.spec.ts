@@ -40,6 +40,26 @@ describe("McpOAuthDcrService", () => {
     expect(timeout.mock.calls[0]?.[0]).toBeLessThanOrEqual(1250);
   });
 
+  it("aborts an actually stalled upstream DCR request within the configured bound", async () => {
+    const fetchMock = vi.fn((_url: string, options: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      const signal = options.signal as AbortSignal;
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    }));
+    global.fetch = fetchMock as typeof fetch;
+    const config = { get: vi.fn((key: string) => ({
+      ZITADEL_INTERNAL_URL: "http://zitadel:8080",
+      OIDC_ISSUER_URL: "https://auth.resource-portal.test",
+      ZITADEL_DCR_REQUEST_TIMEOUT_MS: "500",
+      ZITADEL_DCR_REGISTRATION_TIMEOUT_MS: "5000",
+    })[key]) } as unknown as ConfigService;
+    const started = Date.now();
+    await expect(new McpOAuthDcrService(config).register({})).rejects.toThrow(
+      "ZITADEL DCR upstream request unavailable or timed out",
+    );
+    expect(Date.now() - started).toBeLessThan(2500);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("fails closed on invalid timeout configuration before any upstream request", async () => {
     const fetchMock = vi.fn();
     global.fetch = fetchMock as typeof fetch;
