@@ -60,6 +60,39 @@ describe("DCR real HTTP fault injection (#213)", () => {
     expect(created).toBe(1);
   });
 
+  it("compensates real HTTP registration when management fails and DELETE confirms cleanup", async () => {
+    const calls: string[] = [];
+    let clientExists = false;
+    const service = await withUpstream((req, res) => {
+      calls.push(`${req.method} ${req.url}`);
+      res.setHeader("content-type", "application/json");
+      if (req.method === "POST" && req.url === "/oauth/v2/register") {
+        clientExists = true;
+        res.writeHead(201).end(JSON.stringify({
+          client_id: "synthetic-client",
+          registration_access_token: "rollback-only-secret",
+          registration_client_uri: "https://auth-synthetic.invalid/oauth/v2/register/synthetic-client",
+        }));
+      } else if (req.method === "POST" && req.url === "/management/v1/projects/_search") {
+        expect(req.headers.authorization).toBe("Bearer synthetic-management-token");
+        res.writeHead(503).end('{}');
+      } else if (req.method === "DELETE" && req.url === "/oauth/v2/register/synthetic-client") {
+        expect(req.headers.authorization).toBe("Bearer rollback-only-secret");
+        clientExists = false;
+        res.writeHead(204).end();
+      } else {
+        res.writeHead(500).end('{}');
+      }
+    });
+    await expect(service.register({})).rejects.toThrow("compatibility update failed with HTTP 503");
+    expect(clientExists).toBe(false);
+    expect(calls).toEqual([
+      "POST /oauth/v2/register",
+      "POST /management/v1/projects/_search",
+      "DELETE /oauth/v2/register/synthetic-client",
+    ]);
+  });
+
   it("classifies the actual HTTP 201 + management 503 + rollback DELETE 503 orphan", async () => {
     const methods: string[] = [];
     let upstreamClientExists = false;
