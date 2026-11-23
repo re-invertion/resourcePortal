@@ -70,6 +70,34 @@ describe("TenantMcpAccessGuard", () => {
     expect(settings.assertMcpEnabled).toHaveBeenCalledWith("tenant-id");
     expect(settings.assertUserCanUseMcp).toHaveBeenCalledWith("tenant-id", "user-id");
   });
+  it("denies a valid interactive bearer when MCP is disabled for this tenant", async () => {
+    const f = fixture();
+    f.settings.assertMcpEnabled.mockRejectedValue(new ForbiddenException("Tenant MCP is disabled"));
+    const req = { params: { tenantId: "disabled-tenant" },
+      headers: { authorization: "Bearer signed-user-token" }, user: { id: "user-id" } };
+    await expect(f.guard.canActivate(contextFor(req, { header: vi.fn() }))).rejects.toThrow(
+      "Tenant MCP is disabled",
+    );
+    expect(f.settings.assertUserCanUseMcp).not.toHaveBeenCalled();
+  });
+
+  it("enforces tenant-specific user MCP allowlist at request time, including cross-tenant bearer reuse", async () => {
+    const f = fixture();
+    const actor = { headers: { authorization: "Bearer same-user-token" }, user: { id: "user-a" } };
+    f.settings.assertUserCanUseMcp.mockImplementation(async (tenantId: string, userId: string) => {
+      if (tenantId !== "tenant-a" || userId !== "user-a") {
+        throw new ForbiddenException("Current tenant does not grant MCP access");
+      }
+      return { id: "membership-id" };
+    });
+    await expect(f.guard.canActivate(contextFor({ ...actor, params: { tenantId: "tenant-a" } },
+      { header: vi.fn() }))).resolves.toBe(true);
+    await expect(f.guard.canActivate(contextFor({ ...actor, params: { tenantId: "tenant-b" } },
+      { header: vi.fn() }))).rejects.toThrow("Current tenant does not grant MCP access");
+    expect(f.settings.assertUserCanUseMcp).toHaveBeenCalledWith("tenant-a", "user-a");
+    expect(f.settings.assertUserCanUseMcp).toHaveBeenCalledWith("tenant-b", "user-a");
+  });
+
   it("denies MCP bearer authentication from platform IdP when tenant policy disables it", async () => {
     const f = fixture();
     f.prisma.tenantAuthPolicy.findUnique.mockResolvedValue({
