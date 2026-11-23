@@ -93,6 +93,40 @@ describe("DCR real HTTP fault injection (#213)", () => {
     ]);
   });
 
+  it("never follows a real HTTP 307 rollback redirect with registration Bearer to another endpoint", async () => {
+    const calls: string[] = [];
+    const service = await withUpstream((req, res) => {
+      calls.push(`${req.method} ${req.url}`);
+      res.setHeader("content-type", "application/json");
+      if (req.method === "POST" && req.url === "/oauth/v2/register") {
+        res.writeHead(201).end(JSON.stringify({
+          client_id: "synthetic-client",
+          registration_access_token: "rollback-only-secret",
+          registration_client_uri: "http://auth-synthetic.invalid/oauth/v2/register/synthetic-client",
+        }));
+      } else if (req.method === "POST" && req.url === "/management/v1/projects/_search") {
+        res.writeHead(503).end('{}');
+      } else if (req.method === "DELETE" && req.url === "/oauth/v2/register/synthetic-client") {
+        expect(req.headers.authorization).toBe("Bearer rollback-only-secret");
+        res.writeHead(307, { location: "/untrusted-endpoint" }).end();
+      } else {
+        throw new Error(`Unexpected redirected request: ${req.method} ${req.url}`);
+      }
+    });
+    let publicError: unknown;
+    try { await service.register({}); } catch (error) {
+      publicError = error && typeof error === "object" && "getResponse" in error
+        ? (error as { getResponse: () => unknown }).getResponse() : error;
+    }
+    expect(publicError).toMatchObject({ code: "DCR_PARTIAL_REGISTRATION", clientId: "synthetic-client" });
+    expect(JSON.stringify(publicError)).not.toContain("rollback-only-secret");
+    expect(calls).toEqual([
+      "POST /oauth/v2/register",
+      "POST /management/v1/projects/_search",
+      "DELETE /oauth/v2/register/synthetic-client",
+    ]);
+  });
+
   it("classifies the actual HTTP 201 + management 503 + rollback DELETE 503 orphan", async () => {
     const methods: string[] = [];
     let upstreamClientExists = false;
