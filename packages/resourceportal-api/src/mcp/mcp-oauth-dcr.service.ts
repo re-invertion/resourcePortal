@@ -245,7 +245,18 @@ export class McpOAuthDcrService {
         `ZITADEL DCR compatibility update failed with HTTP ${response.status}`,
       );
     }
-    return (text ? JSON.parse(text) : {}) as T;
+    // ZITADEL response bodies can contain sensitive diagnostics. Never pass a
+    // raw SyntaxError message (which may include the invalid JSON snippet)
+    // to OAuth callers. Preserve compensation for a newly registered client.
+    try {
+      const parsed: unknown = text ? JSON.parse(text) : {};
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("Unexpected management response shape");
+      }
+      return parsed as T;
+    } catch {
+      throw new BadGatewayException("ZITADEL DCR management response was invalid");
+    }
   }
 
   private async rollbackRegistration(registration: DcrRegistrationResponse) {

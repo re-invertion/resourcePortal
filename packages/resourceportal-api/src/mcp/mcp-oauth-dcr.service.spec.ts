@@ -274,6 +274,32 @@ describe("McpOAuthDcrService", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("redacts malformed management JSON and compensates a registered DCR client", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        client_id: "client-1",
+        registration_access_token: "sensitive-registration-token",
+        registration_client_uri: "https://auth.resource-portal.test/oauth/v2/register/client-1",
+      }), { status: 201 }))
+      .mockResolvedValueOnce(new Response(
+        '{"details":"secret-management-response", malformed', { status: 200 },
+      ))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    global.fetch = fetchMock as typeof fetch;
+    let failure: unknown;
+    try { await service().register({}); } catch (error) {
+      failure = error && typeof error === "object" && "getResponse" in error
+        ? (error as { getResponse: () => unknown }).getResponse() : error;
+    }
+    expect(JSON.stringify(failure)).toContain("ZITADEL DCR management response was invalid");
+    expect(JSON.stringify(failure)).not.toContain("secret-management-response");
+    expect(JSON.stringify(failure)).not.toContain("sensitive-registration-token");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenNthCalledWith(3,
+      "http://zitadel:8080/oauth/v2/register/client-1",
+      expect.objectContaining({ method: "DELETE" }));
+  });
+
   it("removes a just-created DCR client when the JWT compatibility update fails", async () => {
     const fetchMock = vi
       .fn()
