@@ -423,3 +423,37 @@ test("published upgrade sources include only exact-commit real rollback certific
     );
   }
 });
+
+test("source v0.2.197 direct upgrade is guarded by independent full restore proof", async () => {
+  const { readFileSync } = await import("node:fs");
+  const pre = readFileSync(new URL("../.github/workflows/release-readiness.yml", import.meta.url), "utf8");
+  const post = readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
+  assert.ok(pre.includes("Independently verify v0.2.197 RP and ZITADEL restore before merge"));
+  assert.ok(pre.includes('bash scripts/run-automatic-rollback-smoke.sh "0.2.197"'));
+  assert.ok(pre.includes("--previous-tag v0.2.197 --head HEAD --mode"));
+  assert.ok(post.includes('source_versions=("${PREVIOUS_TAG#v}" "0.2.197"'));
+  assert.ok(post.includes('"$source_version" == "0.2.197"'));
+  assert.ok(post.includes('--arg source "0.2.197" --arg commit "$GITHUB_SHA" --argjson run "$GITHUB_RUN_ID"'));
+  const run = 50197;
+  const proof = sourceVersion => ({
+    sourceVersion, policy: "image-only", reason: "no-resourceportal-database-schema-changes",
+    targetCommit: hash, workflowRunId: run, kind: "real-upgrade-and-restore",
+    actualDatabaseMigration: true, previousImagesRestored: true, injectedHealthFailure: true,
+    databaseSnapshotVerified: true, databaseSnapshotRestored: true, restoredSourceSchema: true,
+    previousApiReadWriteAfterRollback: true, previousApiRuntimeReadyAfterRollback: true,
+    zitadelDatabaseRestored: true, zitadelSourceRuntimeReadyAfterRollback: true,
+    zitadelSourceEventstoreVerified: true, candidateZitadelRuntimeReadyBeforeRollback: true,
+    candidateZitadelImage, sourceZitadelImage,
+  });
+  const candidates = ["0.2.222", "0.2.197"], recent = proof("0.2.222"), older = proof("0.2.197");
+  assert.deepEqual(certifiedSupportedUpgradeSources(candidates, [recent], hash, "0.2.222", run), ["0.2.222"]);
+  assert.deepEqual(certifiedSupportedUpgradeSources(candidates, [recent, older], hash, "0.2.222", run), candidates);
+  for (const bad of [
+    { ...older, workflowRunId: run + 1 },
+    { ...older, targetCommit: "b".repeat(40) },
+    { ...older, databaseSnapshotRestored: false },
+    { ...older, zitadelDatabaseRestored: false },
+    { ...older, previousApiReadWriteAfterRollback: false },
+    { ...older, kind: "static-allowlist" },
+  ]) assert.throws(() => certifiedSupportedUpgradeSources(candidates, [recent, bad], hash, "0.2.222", run), /Release blocked/);
+});

@@ -318,7 +318,7 @@ contains "$workflow" 'supportedFromVersions:$supported_from_versions' 'release m
 
 # The last known-safe v0.2.146 must be directly certified for post-incident
 # releases; the bugged v0.2.147 cannot be a mandatory intermediate.
-contains "$workflow" 'source_versions=("${PREVIOUS_TAG#v}" "0.2.152" "0.2.146" "0.2.96" "0.2.93" "0.2.92")' 'release independently tests direct 0.2.152 and old safe source 0.2.146'
+contains "$workflow" 'source_versions=("${PREVIOUS_TAG#v}" "0.2.197" "0.2.152" "0.2.146" "0.2.96" "0.2.93" "0.2.92")' 'release independently certifies direct 0.2.197, 0.2.152 and older safe sources'
 readiness="$(cat "$repo_root/.github/workflows/release-readiness.yml")"
 contains "$readiness" 'Independently verify v0.2.146 RP and ZITADEL restore before merge' 'pre-merge gate independently checks last safe source'
 contains "$readiness" 'run-automatic-rollback-smoke.sh "0.2.146"' 'pre-merge gate executes real source-146 rollback'
@@ -336,6 +336,15 @@ contains "$readiness" 'Independently verify v0.2.152 RP and ZITADEL restore befo
 contains "$readiness" 'run-automatic-rollback-smoke.sh "0.2.152"' 'pre-merge gate executes actual source-152 rollback'
 contains "$readiness" 'rp-rollback-evidence-152.json' 'source-152 evidence independent from prior release'
 contains "$readiness" '--previous-tag v0.2.152 --head HEAD' 'pre-merge source-152 proof matches target SHA'
+# Installed v0.2.197 also requires its own exact-source, dual-database
+# recovery certificate, never inferred from another source or Git history.
+contains "$workflow" 'source_versions=("${PREVIOUS_TAG#v}" "0.2.197"' 'release includes installed v0.2.197 in individually certified sources'
+contains "$workflow" '--arg source "0.2.197" --arg commit "$GITHUB_SHA" --argjson run "$GITHUB_RUN_ID"' 'post-merge source-197 certificate checks exact release SHA/run'
+contains "$readiness" 'Independently verify v0.2.197 RP and ZITADEL restore before merge' 'pre-merge gate independently tests direct source 197'
+contains "$readiness" 'run-automatic-rollback-smoke.sh "0.2.197"' 'pre-merge gate runs real source-197 restore'
+contains "$readiness" 'rp-rollback-evidence-197.json' 'pre-merge 197 evidence is isolated from source 152'
+contains "$readiness" '--previous-tag v0.2.197 --head HEAD' 'pre-merge source-197 proof matches exact candidate SHA'
+
 
 contains "$workflow" 'apiCapabilities:{appConsumerActionsV2Callback:true}' 'signed release manifest advertises exact App Consumer callback availability'
 contains "$workflow" 'MIN_SUPPORTED_SOURCE_VERSION: "0.1.8"' 'v0.2 release workflow keeps v0.1.8+ as supported upgrade sources'

@@ -177,3 +177,18 @@ and source ZITADEL/API recovery evidence BEFORE merge. Before publication,
 v0.2.146 must have an exact-target-SHA, same-workflow-run verified restoration
 certificate. Without that evidence the publisher fails closed; it may never
 advertise a direct v0.2.146 upgrade via static history or manual override.
+
+### Direct upgrade from an installed v0.2.197
+
+The next signed patch may advertise `0.2.197` in
+`migrations.supportedFromVersions` only after it has independently passed
+`real-upgrade-and-restore` certification from that official source version.
+The pre-merge gate tests immutable v0.2.197 images, injected upgrade failure,
+restoration of both RP and ZITADEL databases, prior API read/write readiness
+and ZITADEL event-store/runtime recovery. The publisher repeats the full test
+in the exact release run and binds proof to the target SHA and run ID before
+signing the manifest. An unavailable or failed source test blocks the release;
+no version whitelist, manifest retagging or updater bypass is acceptable.
+
+Passing this isolated check makes a direct v0.2.197 → newer release update
+eligible; production recovery and success still require operator confirmation.
