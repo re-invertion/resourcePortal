@@ -38,10 +38,26 @@ describe("DCR real HTTP fault injection (#213)", () => {
     const service = await withUpstream(() => { requests += 1; });
     const start = Date.now();
     await expect(service.register({ client_name: "synthetic" })).rejects.toThrow(
-      "ZITADEL DCR upstream request unavailable or timed out",
+      "ZITADEL OAuth client registration may have been accepted",
     );
     expect(Date.now() - start).toBeLessThan(2600);
     expect(requests).toBe(1);
+  });
+
+  it("marks an accepted POST with a dropped HTTP response as uncertain, never safe-to-retry", async () => {
+    let created = 0;
+    const service = await withUpstream((_req, res) => {
+      created += 1; // issuer persisted registration before losing the response
+      res.destroy();
+    });
+    let publicError: unknown;
+    try { await service.register({ client_name: "synthetic-dropped-response" }); } catch (error) {
+      publicError = error && typeof error === "object" && "getResponse" in error
+        ? (error as { getResponse: () => unknown }).getResponse() : error;
+    }
+    expect(publicError).toMatchObject({ code: "DCR_REGISTRATION_OUTCOME_UNCERTAIN" });
+    expect(JSON.stringify(publicError)).toContain("reconcile upstream clients before retrying");
+    expect(created).toBe(1);
   });
 
   it("classifies the actual HTTP 201 + management 503 + rollback DELETE 503 orphan", async () => {
