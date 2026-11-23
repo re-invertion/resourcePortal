@@ -154,6 +154,26 @@ describe("dedicated NVIDIA GPU allocation transactions", () => {
     expect(devices.get(GPU)!.allocatedSingleAppId).toBe(appA);
   });
 
+  it("transfers one GPU to another app in the same tenant only after verified detach (#526)", async () => {
+    const { service, devices, apps } = fakeDatabase();
+    apps.get(appB)!.appGroup.tenantId = tenantA;
+    await service.reserve(tenantA, "group-a", appA, GPU);
+    await expect(service.reserve(tenantA, "group-b", appB, GPU)).rejects.toThrow("GpuAlreadyAllocated");
+    // The source draft is CPU-only; a successful runtime rollout must
+    // positively verify cleanup before ownership can move.
+    apps.get(appA)!.gpu = 0;
+    await expect(service.releaseAfterVerifiedCleanup(appA, false)).rejects.toThrow("GpuRuntimeCleanupRequired");
+    expect(devices.get(GPU)?.allocatedSingleAppId).toBe(appA);
+    expect((await service.releaseAfterVerifiedCleanup(appA, true)).released).toBe(true);
+    expect(devices.get(GPU)?.allocatedSingleAppId).toBeNull();
+    expect(devices.get(GPU)?.allocationState).toBe("Free");
+    await service.reserve(tenantA, "group-b", appB, GPU);
+    expect(devices.get(GPU)?.allocatedSingleAppId).toBe(appB);
+    expect(apps.get(appA)?.gpu).toBe(0);
+    expect(apps.get(appB)?.gpu).toBe(1);
+    await expect(service.reserve(tenantA, "group-a", appA, GPU)).rejects.toThrow("GpuAlreadyAllocated");
+  });
+
   it("never frees a stopped or failed workload without verified cleanup", async () => {
     const { service, devices } = fakeDatabase();
     await service.reserve(tenantA, "group-a", appA, GPU);
