@@ -313,6 +313,41 @@ jobs:
             (.sourceZitadelImage | test("^ghcr[.]io/zitadel/zitadel@sha256:[a-f0-9]{64}$"))
           ' "$RP_ROLLBACK_EVIDENCE_OUTPUT"
 
+      - name: Independently verify v0.2.197 RP and ZITADEL restore before merge
+        env:
+          RP_ROLLBACK_EVIDENCE_OUTPUT: ${{ runner.temp }}/rp-rollback-evidence-152.json
+          RP_ROLLBACK_E2E_ISOLATED: 'true'
+          RP_ROLLBACK_CANDIDATE_ZITADEL_IMAGE: ghcr.io/zitadel/zitadel:v4.17.0
+          VALIDATION_MODE: ${{ steps.release-mode.outputs.mode }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Prove a DIRECT upgrade from installed v0.2.197 to this exact candidate.
+          # Both old RP/ZITADEL databases and runtimes must recover after
+          # injected failure; adjacent-version proof cannot be substituted.
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          bash scripts/run-automatic-rollback-smoke.sh "0.2.197"
+          test -s "$RP_ROLLBACK_EVIDENCE_OUTPUT"
+          node scripts/release-rollback-policy.mjs \
+            --previous-tag v0.2.197 --head HEAD --mode "$VALIDATION_MODE" \
+            --verified-evidence-file "$RP_ROLLBACK_EVIDENCE_OUTPUT" --require-automatic
+          jq -e --arg commit "$GITHUB_SHA" --argjson run "$GITHUB_RUN_ID" '
+            .sourceVersion == "0.2.197" and .targetCommit == $commit and
+            .workflowRunId == $run and .kind == "real-upgrade-and-restore" and
+            .actualDatabaseMigration == true and
+            .previousImagesRestored == true and .injectedHealthFailure == true and
+            .databaseSnapshotVerified == true and .databaseSnapshotRestored == true and
+            .restoredSourceSchema == true and
+            .previousApiReadWriteAfterRollback == true and
+            .previousApiRuntimeReadyAfterRollback == true and
+            .zitadelDatabaseRestored == true and
+            .zitadelSourceRuntimeReadyAfterRollback == true and
+            .zitadelSourceEventstoreVerified == true and
+            .candidateZitadelRuntimeReadyBeforeRollback == true and
+            (.candidateZitadelImage | test("^ghcr[.]io/zitadel/zitadel@sha256:[a-f0-9]{64}$")) and
+            (.sourceZitadelImage | test("^ghcr[.]io/zitadel/zitadel@sha256:[a-f0-9]{64}$"))
+          ' "$RP_ROLLBACK_EVIDENCE_OUTPUT"
+
       - name: Require verified automatic rollback before allowing merge
         env:
           GH_TOKEN: ${{ github.token }}
