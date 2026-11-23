@@ -54,3 +54,26 @@ it.each([
   expect(await screen.findByText(`No ${kind} yet`)).toBeTruthy();
   expect(screen.queryByText(errorText)).toBeNull();
 });
+
+it("guards modified configuration edits against silent Cancel and route navigation", async () => {
+  const fetchMock = vi.fn(async () => json([]));
+  vi.stubGlobal("fetch", fetchMock);
+  const nativeConfirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  render(<><a href="/tenants/t1/app-groups/ag1/networking">Networking</a><AppGroupConfig tenantId="t1" appGroupId="ag1" /></>);
+
+  fireEvent.click(screen.getAllByRole("button", { name: "Add" })[0]);
+  fireEvent.change(screen.getByRole("textbox", { name: /Name/ }), { target: { value: "DATABASE_URL" } });
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(nativeConfirm).toHaveBeenCalledWith("You have unsaved changes. Discard your edits?");
+  expect(screen.getByRole("textbox", { name: /Name/ })).toHaveProperty("value", "DATABASE_URL");
+
+  const link = screen.getByRole("link", { name: "Networking" });
+  fireEvent.click(link);
+  expect(nativeConfirm).toHaveBeenCalledWith("You have unsaved changes. Leave this page and discard your edits?");
+
+  nativeConfirm.mockReturnValue(true);
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("textbox", { name: /Name/ })).toBeNull();
+  expect(fetchMock.mock.calls.some(([, init]) => ["POST", "PATCH", "DELETE"].includes((init as RequestInit | undefined)?.method ?? ""))).toBe(false);
+  nativeConfirm.mockRestore();
+});
