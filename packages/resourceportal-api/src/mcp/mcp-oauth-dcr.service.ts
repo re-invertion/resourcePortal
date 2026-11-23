@@ -46,14 +46,30 @@ export class McpOAuthDcrService {
       },
       body: JSON.stringify(metadata ?? {}),
     });
-    const body = await boundedDcrResponseText(response);
+    let body: string;
+    try {
+      body = await boundedDcrResponseText(response);
+    } catch (error) {
+      // HTTP 201 can already have created a ZITADEL client even when the
+      // response body is truncated, oversized or unreadable. Without the
+      // registration ID/rollback credential, deletion cannot be verified.
+      if (response.status === 201) throw this.uncertainRegistration();
+      throw error;
+    }
     const contentType = response.headers.get("content-type") ?? "application/json";
 
     if (response.status !== 201) {
       return { status: response.status, contentType, body };
     }
 
-    const registration = this.parseRegistration(body);
+    let registration: DcrRegistrationResponse & { client_id: string };
+    try {
+      registration = this.parseRegistration(body);
+    } catch {
+      // Never retry blindly after a successful upstream registration whose
+      // response cannot be parsed: a partial OAuth client can remain orphaned.
+      throw this.uncertainRegistration();
+    }
     try {
       await this.forceJwtAccessToken(registration.client_id, deadline);
     } catch (error) {
@@ -76,6 +92,13 @@ export class McpOAuthDcrService {
     }
 
     return { status: response.status, contentType, body };
+  }
+
+  private uncertainRegistration() {
+    return new BadGatewayException({
+      code: "DCR_REGISTRATION_OUTCOME_UNCERTAIN",
+      message: "ZITADEL accepted OAuth client registration but its ID or rollback credentials could not be read; reconcile upstream clients before retrying",
+    });
   }
 
   private parseRegistration(body: string): DcrRegistrationResponse & { client_id: string } {

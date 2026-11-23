@@ -328,10 +328,32 @@ describe("McpOAuthDcrService", () => {
   });
 });
 describe("MCP DCR bounded response and deadline (#213)", () => {
-  it("rejects oversized upstream DCR responses before buffering", async () => {
+  it("identifies uncertain upstream registration after an oversized 201 response", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response("A".repeat(1_048_577), { status: 201 }));
     global.fetch = fetchMock as typeof fetch;
-    await expect(service().register({})).rejects.toThrow("response exceeded size limit");
+    let failure: unknown;
+    try { await service().register({}); } catch (error) {
+      failure = error && typeof error === "object" && "getResponse" in error
+        ? (error as { getResponse: () => unknown }).getResponse() : error;
+    }
+    expect(failure).toMatchObject({ code: "DCR_REGISTRATION_OUTCOME_UNCERTAIN" });
+    expect(JSON.stringify(failure)).not.toContain("A".repeat(100));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports malformed successful DCR response as requiring manual reconciliation", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(
+      "not-json-with-secret-registration-credential", { status: 201 },
+    ));
+    global.fetch = fetchMock as typeof fetch;
+    let failure: unknown;
+    try { await service().register({}); } catch (error) {
+      failure = error && typeof error === "object" && "getResponse" in error
+        ? (error as { getResponse: () => unknown }).getResponse() : error;
+    }
+    expect(failure).toMatchObject({ code: "DCR_REGISTRATION_OUTCOME_UNCERTAIN" });
+    expect(JSON.stringify(failure)).not.toContain("secret-registration-credential");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
   it("provides AbortSignals on the registration and management requests", async () => {
     const fetchMock = vi.fn()
