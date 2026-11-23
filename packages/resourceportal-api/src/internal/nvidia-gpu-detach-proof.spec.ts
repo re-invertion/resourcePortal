@@ -33,6 +33,7 @@ describe("GPU release Swarm task proof (#526)", () => {
     const service = Object.create(StackRolloutService.prototype) as StackRolloutService;
     (service as unknown as { config: unknown }).config = { get: () => undefined };
     (service as unknown as { runDocker: (args: string[]) => Promise<unknown> }).runDocker = async (args) => {
+      await Promise.resolve();
       if (args[0] === "node" && args[1] === "ls") return {
         exitCode: 0, stdout: "abcdefghijklmnopqrstuvwxy|Ready|Active", stderr: "",
       };
@@ -53,6 +54,7 @@ describe("GPU release Swarm task proof (#526)", () => {
     const service = Object.create(StackRolloutService.prototype) as StackRolloutService;
     (service as unknown as { config: unknown }).config = { get: () => undefined };
     (service as unknown as { runDocker: (args: string[]) => Promise<unknown> }).runDocker = async (args) => {
+      await Promise.resolve();
       if (args[0] === "node" && args[1] === "ls") return {
         exitCode: 0, stdout: "abcdefghijklmnopqrstuvwxy|Ready|Active", stderr: "",
       };
