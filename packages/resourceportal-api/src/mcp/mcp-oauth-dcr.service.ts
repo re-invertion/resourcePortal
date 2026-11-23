@@ -300,6 +300,9 @@ export class McpOAuthDcrService {
     const response = await this.upstreamFetch(`${this.internalUrl()}${url.pathname}`, {
       signal: AbortSignal.timeout(this.requestTimeoutMs()),
       method: "DELETE",
+      // A redirect can forward this registration-scoped Bearer to another
+      // endpoint (including another path on the same issuer). Never follow it.
+      redirect: "error",
       headers: {
         authorization: `Bearer ${registration.registration_access_token}`,
         "x-zitadel-instance-host": this.issuerHost(),
