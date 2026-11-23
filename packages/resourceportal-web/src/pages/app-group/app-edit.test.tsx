@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ApplicationEdit } from "./app-edit";
 
@@ -414,7 +414,7 @@ it("does not overwrite dirty environment editor when a delayed runtime GET resol
   fireEvent.click(screen.getByRole("button", { name: "Add variable" }));
   fireEvent.change(screen.getByRole("textbox", { name: "Environment name 1" }), { target: { value: "DATABASE_URL" } });
   fireEvent.change(screen.getByRole("textbox", { name: "Environment value 1" }), { target: { value: "uncommitted-edit" } });
-  completeRuntime(json({ environment: { DATABASE_URL: "server-old" } }));
-  await waitFor(() => expect(screen.getByRole("textbox", { name: "Environment value 1" })).toHaveProperty("value", "uncommitted-edit"));
+  await act(async () => { completeRuntime(json({ environment: { DATABASE_URL: "server-old" } })); await pendingRuntime; });
+  expect(screen.getByRole("textbox", { name: "Environment value 1" })).toHaveProperty("value", "uncommitted-edit");
   expect(screen.getByText("Unsaved form changes")).toBeTruthy();
 });
