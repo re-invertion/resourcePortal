@@ -35,17 +35,31 @@ export class McpOAuthDcrService {
 
   async register(metadata: unknown, authorization?: string): Promise<DcrResult> {
     const deadline = Date.now() + this.registrationTimeoutMs();
-    const response = await this.upstreamFetch(`${this.internalUrl()}/oauth/v2/register`, {
-      signal: AbortSignal.timeout(this.requestTimeoutMs(deadline)),
+    // Validate local configuration before treating a dispatched registration
+    // POST as potentially accepted by the issuer.
+    const timeoutMs = this.requestTimeoutMs(deadline);
+    const registerUrl = `${this.internalUrl()}/oauth/v2/register`;
+    const issuerHost = this.issuerHost();
+    const requestBody = JSON.stringify(metadata ?? {});
+    let response: Response;
+    try {
+      response = await this.upstreamFetch(registerUrl, {
+      signal: AbortSignal.timeout(timeoutMs),
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-zitadel-instance-host": this.issuerHost(),
-        "x-zitadel-public-host": this.issuerHost(),
+        "x-zitadel-instance-host": issuerHost,
+        "x-zitadel-public-host": issuerHost,
         ...(authorization ? { authorization } : {}),
       },
-      body: JSON.stringify(metadata ?? {}),
-    });
+      body: requestBody,
+      });
+    } catch {
+      // The POST may have reached ZITADEL and committed a client before a
+      // timeout, connection reset or lost response. Never imply that a blind
+      // retry is guaranteed safe when no registration ID can be recovered.
+      throw this.uncertainRegistration();
+    }
     let body: string;
     try {
       body = await boundedDcrResponseText(response);
@@ -97,7 +111,7 @@ export class McpOAuthDcrService {
   private uncertainRegistration() {
     return new BadGatewayException({
       code: "DCR_REGISTRATION_OUTCOME_UNCERTAIN",
-      message: "ZITADEL accepted OAuth client registration but its ID or rollback credentials could not be read; reconcile upstream clients before retrying",
+      message: "ZITADEL OAuth client registration may have been accepted but its outcome or rollback credentials could not be verified; reconcile upstream clients before retrying",
     });
   }
 
