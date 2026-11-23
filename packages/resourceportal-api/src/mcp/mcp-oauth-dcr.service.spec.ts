@@ -43,7 +43,7 @@ describe("McpOAuthDcrService", () => {
   it("aborts an actually stalled upstream DCR request within the configured bound", async () => {
     const fetchMock = vi.fn((_url: string, options: RequestInit) => new Promise<Response>((_resolve, reject) => {
       const signal = options.signal as AbortSignal;
-      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      signal.addEventListener("abort", () => reject(new DOMException("request timed out", "TimeoutError")), { once: true });
     }));
     global.fetch = fetchMock as typeof fetch;
     const config = { get: vi.fn((key: string) => ({
