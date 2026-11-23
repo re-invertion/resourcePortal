@@ -151,10 +151,11 @@ jobs:
           # Independently certify the full RP + ZITADEL database restore from
           # 0.2.152 in this exact publishing run, in addition to the previously
           # supported source 0.2.146 and earlier verified production sources.
-          source_versions=("${PREVIOUS_TAG#v}" "0.2.152" "0.2.146" "0.2.96" "0.2.93" "0.2.92")
+          # Source 0.2.197 requires its own restore proof.
+          source_versions=("${PREVIOUS_TAG#v}" "0.2.197" "0.2.152" "0.2.146" "0.2.96" "0.2.93" "0.2.92")
           certified=()
           for source_version in "${source_versions[@]}"; do
-            [[ "$source_version" == "${PREVIOUS_TAG#v}" || "$source_version" == "0.2.152" || "$source_version" == "0.2.146" || "$source_version" == "0.2.96" || "$source_version" == "0.2.93" || "$source_version" == "0.2.92" ]] || exit 1
+            [[ "$source_version" == "${PREVIOUS_TAG#v}" || "$source_version" == "0.2.197" || "$source_version" == "0.2.152" || "$source_version" == "0.2.146" || "$source_version" == "0.2.96" || "$source_version" == "0.2.93" || "$source_version" == "0.2.92" ]] || exit 1
             # A source not earlier than the target release cannot be certified.
             [[ "$(printf '%s\n%s\n' "$source_version" "$VERSION" | sort -V | head -n 1)" == "$source_version" ]] || continue
             if [[ " ${certified[*]} " == *" $source_version "* ]]; then continue; fi
@@ -239,6 +240,29 @@ jobs:
           if [[ "$VERSION" != "0.2.152" &&
                 "$(printf '%s\n%s\n' "0.2.152" "$VERSION" | sort -V | head -n 1)" == "0.2.152" ]]; then
             jq -e --arg source "0.2.152" --arg commit "$GITHUB_SHA" --argjson run "$GITHUB_RUN_ID" '
+              any(.[];
+                .sourceVersion == $source and .targetCommit == $commit and
+                .workflowRunId == $run and .kind == "real-upgrade-and-restore" and
+                .actualDatabaseMigration == true and
+                .previousImagesRestored == true and .injectedHealthFailure == true and
+                .databaseSnapshotVerified == true and .databaseSnapshotRestored == true and
+                .restoredSourceSchema == true and .previousApiReadWriteAfterRollback == true and
+                .previousApiRuntimeReadyAfterRollback == true and
+                .zitadelDatabaseRestored == true and .zitadelSourceRuntimeReadyAfterRollback == true and
+                .zitadelSourceEventstoreVerified == true and
+                .candidateZitadelRuntimeReadyBeforeRollback == true and
+                (.candidateZitadelImage | test("^ghcr[.]io/zitadel/zitadel@sha256:[a-f0-9]{64}$")) and
+                (.sourceZitadelImage | test("^ghcr[.]io/zitadel/zitadel@sha256:[a-f0-9]{64}$"))
+              )
+            ' "$RUNNER_TEMP/rp-rollback-certifications.json"
+          fi
+
+          # The installed v0.2.197 must have its own same-run proof of restored
+          # RP and ZITADEL databases, working old API/runtime and injected
+          # failure recovery. Never infer compatibility from neighboring tags.
+          if [[ "$VERSION" != "0.2.197" &&
+                "$(printf '%s\n%s\n' "0.2.197" "$VERSION" | sort -V | head -n 1)" == "0.2.197" ]]; then
+            jq -e --arg source "0.2.197" --arg commit "$GITHUB_SHA" --argjson run "$GITHUB_RUN_ID" '
               any(.[];
                 .sourceVersion == $source and .targetCommit == $commit and
                 .workflowRunId == $run and .kind == "real-upgrade-and-restore" and
