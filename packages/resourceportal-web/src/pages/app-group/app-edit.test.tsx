@@ -397,24 +397,44 @@ it("distinguishes HTTP endpoint API failures from a valid empty application list
     String(path).endsWith("/single-apps/app1/http-endpoints")).length).toBeGreaterThanOrEqual(2));
 });
 
-it("does not overwrite dirty environment editor when a delayed runtime GET resolves", async () => {
+it("blocks editing while environment loads and preserves unseen server keys on save", async () => {
   let completeRuntime!: (value: Response) => void;
   const pendingRuntime = new Promise<Response>(resolve => { completeRuntime = resolve; });
-  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+  const patches: Array<Record<string, unknown>> = [];
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.endsWith("/single-apps")) return json([{
       id: "app1", name: "checkout", image: "nginx:latest", runtimeState: "Running"
     }]);
+    if (url.endsWith("/runtime-config") && init?.method === "PATCH") {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      patches.push(body);
+      return json({ environment: body.environment });
+    }
     if (url.endsWith("/runtime-config")) return pendingRuntime;
     if (url.endsWith("/gpu-devices")) return json({ enabled: false, quota: 0, devices: [] });
     return json([]);
-  }));
+  });
+  vi.stubGlobal("fetch", fetchMock);
   render(<ApplicationEdit tenantId="t1" appGroupId="ag1" appId="app1" subsection="environment" />);
   await screen.findByRole("heading", { name: "checkout", level: 1 });
-  fireEvent.click(screen.getByRole("button", { name: "Add variable" }));
-  fireEvent.change(screen.getByRole("textbox", { name: "Environment name 1" }), { target: { value: "DATABASE_URL" } });
-  fireEvent.change(screen.getByRole("textbox", { name: "Environment value 1" }), { target: { value: "uncommitted-edit" } });
-  await act(async () => { completeRuntime(json({ environment: { DATABASE_URL: "server-old" } })); await pendingRuntime; });
-  expect(screen.getByRole("textbox", { name: "Environment value 1" })).toHaveProperty("value", "uncommitted-edit");
+  const addVariable = screen.getByRole("button", { name: "Add variable" }) as HTMLButtonElement;
+  const save = screen.getByRole("button", { name: "Save environment" }) as HTMLButtonElement;
+  expect(addVariable.disabled).toBe(true);
+  expect(save.disabled).toBe(true);
+  fireEvent.click(addVariable);
+  expect(screen.queryByRole("textbox", { name: "Environment name 1" })).toBeNull();
+  await act(async () => {
+    completeRuntime(json({ environment: { DATABASE_URL: "server-old" } }));
+    await pendingRuntime;
+  });
+  await waitFor(() => expect(addVariable.disabled).toBe(false));
+  expect(screen.getByRole("textbox", { name: "Environment name 1" })).toHaveProperty("value", "DATABASE_URL");
+  fireEvent.click(addVariable);
+  fireEvent.change(screen.getByRole("textbox", { name: "Environment name 2" }), { target: { value: "NEW_KEY" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Environment value 2" }), { target: { value: "new-local-value" } });
   expect(screen.getByText("Unsaved form changes")).toBeTruthy();
+  fireEvent.click(save);
+  await waitFor(() => expect(patches).toHaveLength(1));
+  expect(patches[0].environment).toEqual({ DATABASE_URL: "server-old", NEW_KEY: "new-local-value" });
 });
