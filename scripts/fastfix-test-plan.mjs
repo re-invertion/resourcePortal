@@ -411,8 +411,8 @@ const classifiers = [
   [/^packages\/resourceportal-web\/src\/pages\/app-group\/(?:config|config-code-preview\.test)\.tsx$/, ["tenant-ux-patch"]],
   // #399 §15: strict explicit paths and exact RTL checks for list/config and
   // platform DNS/SMTP fields. Keep unregistered variants fail-closed.
-  [/^packages\\/resourceportal-web\\/src\\/pages\\/app-group\\/(?:apps|config)(?:\\.test)?\\.tsx$/, ["section15-form-reliability", "tenant-ux-patch", "applications"]],
-  [/^packages\\/resourceportal-web\\/src\\/pages\\/platform-(?:dns|settings)(?:\\.test)?\\.tsx$/, ["section15-form-reliability", "platform-admin-ui", "security"]],
+  [/^packages\/resourceportal-web\/src\/pages\/app-group\/(?:apps|config)(?:\.test)?\.tsx$/, ["section15-form-reliability", "tenant-ux-patch", "applications"]],
+  [/^packages\/resourceportal-web\/src\/pages\/platform-(?:dns|settings)(?:\.test)?\.tsx$/, ["section15-form-reliability", "platform-admin-ui", "security"]],
   // Issue #399 follow-up: workspace navigation, search, deployment monitoring
   // and its new regression fixtures must participate in Fast Fix selection.
   [/^packages\/resourceportal-web\/src\/components\/shell\.test\.tsx$/, ["tenant-ux-patch", "tenant-access", "security"]],
