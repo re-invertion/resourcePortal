@@ -22,6 +22,37 @@ afterEach(() => {
 });
 
 describe("McpOAuthDcrService", () => {
+  it("respects bounded operator-configured request timeouts", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: "invalid_client_metadata" }), { status: 400 }),
+    );
+    global.fetch = fetchMock as typeof fetch;
+    const config = { get: vi.fn((key: string) => ({
+      ZITADEL_INTERNAL_URL: "http://zitadel:8080",
+      OIDC_ISSUER_URL: "https://auth.resource-portal.test",
+      ZITADEL_DCR_REQUEST_TIMEOUT_MS: "1250",
+      ZITADEL_DCR_REGISTRATION_TIMEOUT_MS: "5000",
+    })[key]) } as unknown as ConfigService;
+    await new McpOAuthDcrService(config).register({});
+    expect(timeout).toHaveBeenCalledWith(expect.any(Number));
+    expect(timeout.mock.calls[0]?.[0]).toBeGreaterThan(0);
+    expect(timeout.mock.calls[0]?.[0]).toBeLessThanOrEqual(1250);
+  });
+
+  it("fails closed on invalid timeout configuration before any upstream request", async () => {
+    const fetchMock = vi.fn();
+    global.fetch = fetchMock as typeof fetch;
+    const config = { get: vi.fn((key: string) => ({
+      ZITADEL_INTERNAL_URL: "http://zitadel:8080",
+      ZITADEL_DCR_REQUEST_TIMEOUT_MS: "never",
+    })[key]) } as unknown as ConfigService;
+    await expect(new McpOAuthDcrService(config).register({})).rejects.toThrow(
+      "ZITADEL_DCR_REQUEST_TIMEOUT_MS must be a positive integer",
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("uses the v2 partial application update so JWT conversion preserves public-client OAuth settings", async () => {
     const fetchMock = vi
       .fn()
@@ -188,6 +219,24 @@ describe("McpOAuthDcrService", () => {
     global.fetch = fetchMock as typeof fetch;
     await expect(service().register({})).resolves.toMatchObject({ status: 201 });
     expect(fetchMock).toHaveBeenCalledTimes(5);
+  });
+
+  it("does not leak internal URLs or credentials when the upstream connection fails", async () => {
+    const fetchMock = vi.fn().mockRejectedValueOnce(
+      new TypeError("connect failed to http://zitadel:8080 with token sensitive-secret"),
+    );
+    global.fetch = fetchMock as typeof fetch;
+    let thrown: unknown;
+    try {
+      await service().register({});
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeDefined();
+    expect(String(thrown)).toContain("ZITADEL DCR upstream request unavailable or timed out");
+    expect(String(thrown)).not.toContain("sensitive-secret");
+    expect(String(thrown)).not.toContain("http://zitadel:8080");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("passes DCR validation errors through without management mutations", async () => {

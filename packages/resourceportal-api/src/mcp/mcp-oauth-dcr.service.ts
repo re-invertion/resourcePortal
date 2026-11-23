@@ -34,9 +34,9 @@ export class McpOAuthDcrService {
   constructor(private readonly config: ConfigService) {}
 
   async register(metadata: unknown, authorization?: string): Promise<DcrResult> {
-    const deadline = Date.now() + 30_000;
-    const response = await fetch(`${this.internalUrl()}/oauth/v2/register`, {
-      signal: AbortSignal.timeout(10_000),
+    const deadline = Date.now() + this.registrationTimeoutMs();
+    const response = await this.upstreamFetch(`${this.internalUrl()}/oauth/v2/register`, {
+      signal: AbortSignal.timeout(this.requestTimeoutMs(deadline)),
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -204,8 +204,8 @@ export class McpOAuthDcrService {
   ): Promise<T> {
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) throw new BadGatewayException("ZITADEL DCR registration exceeded deadline");
-    const response = await fetch(`${this.internalUrl()}${path}`, {
-      signal: AbortSignal.timeout(Math.max(1, Math.min(10_000, remainingMs))),
+    const response = await this.upstreamFetch(`${this.internalUrl()}${path}`, {
+      signal: AbortSignal.timeout(this.requestTimeoutMs(deadline)),
       method,
       headers: {
         authorization: `Bearer ${this.managementToken()}`,
@@ -243,8 +243,8 @@ export class McpOAuthDcrService {
         !/^\/oauth\/v2\/register\/[a-zA-Z0-9._~-]+$/.test(url.pathname)) {
       throw new BadGatewayException("ZITADEL DCR rollback URI was not trusted");
     }
-    const response = await fetch(`${this.internalUrl()}${url.pathname}`, {
-      signal: AbortSignal.timeout(10_000),
+    const response = await this.upstreamFetch(`${this.internalUrl()}${url.pathname}`, {
+      signal: AbortSignal.timeout(this.requestTimeoutMs()),
       method: "DELETE",
       headers: {
         authorization: `Bearer ${registration.registration_access_token}`,
@@ -255,6 +255,47 @@ export class McpOAuthDcrService {
     if (!response.ok) {
       throw new BadGatewayException(`ZITADEL DCR rollback failed with HTTP ${response.status}`);
     }
+  }
+
+  /** Do not expose upstream transport exception messages, URLs or credentials to DCR callers. */
+  private async upstreamFetch(url: string, options: RequestInit): Promise<Response> {
+    try {
+      return await fetch(url, options);
+    } catch (error) {
+      if (error instanceof TypeError ||
+          (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError"))) {
+        throw new BadGatewayException("ZITADEL DCR upstream request unavailable or timed out");
+      }
+      throw error;
+    }
+  }
+
+  /** Keep operator overrides bounded even if the environment is misconfigured. */
+  private registrationTimeoutMs(): number {
+    return this.boundedTimeout("ZITADEL_DCR_REGISTRATION_TIMEOUT_MS", 30_000, 1_000, 120_000);
+  }
+
+  private requestTimeoutMs(deadline?: number): number {
+    const configured = this.boundedTimeout("ZITADEL_DCR_REQUEST_TIMEOUT_MS", 10_000, 500, 30_000);
+    if (deadline === undefined) return configured;
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      throw new BadGatewayException("ZITADEL DCR registration exceeded deadline");
+    }
+    return Math.max(1, Math.min(configured, remaining));
+  }
+
+  private boundedTimeout(key: string, fallback: number, minimum: number, maximum: number): number {
+    const value = this.config.get<string>(key);
+    if (value === undefined || value === "") return fallback;
+    if (!/^[0-9]+$/.test(String(value))) {
+      throw new ServiceUnavailableException(`${key} must be a positive integer in milliseconds`);
+    }
+    const number = Number(value);
+    if (!Number.isSafeInteger(number) || number < minimum || number > maximum) {
+      throw new ServiceUnavailableException(`${key} must be between ${minimum} and ${maximum} milliseconds`);
+    }
+    return number;
   }
 
   private internalUrl() {
