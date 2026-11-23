@@ -446,6 +446,14 @@ describe("DCR partial registration compensation (#213)", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
+  it("never forwards rollback bearer to a different HTTP hostname despite tolerated issuer-host HTTP metadata", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(registration("http://attacker.invalid/oauth/v2/register/client-1"))
+      .mockResolvedValueOnce(new Response("{}", { status: 503 }));
+    await partialRegistrationResponse(fetchMock);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("does not send registration bearer to a rollback URI outside the DCR endpoint", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(registration("https://auth.resource-portal.test/management/v1/projects/_search"))
