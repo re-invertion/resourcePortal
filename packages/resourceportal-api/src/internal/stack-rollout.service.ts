@@ -125,6 +125,65 @@ export class StackRolloutService {
     return true;
   }
 
+
+  /**
+   * A gpu:0 service may still be Running. Prove that its current service
+   * template and every non-terminal task on every Swarm node have detached
+   * from NVIDIA before releasing the old database reservation. Fail closed
+   * when a node or task cannot be inspected.
+   */
+  async verifyDetachedGpuServiceTasks(
+    stackName: string, serviceNames: readonly string[],
+  ): Promise<boolean> {
+    if (!serviceNames.length) return true;
+    if (!/^[a-z0-9_-]{1,128}$/.test(stackName) ||
+        serviceNames.some((name) => !/^[a-z0-9_-]{1,128}$/.test(name))) return false;
+    const services = new Set(serviceNames.map((name) => stackName + "_" + name));
+    const context = this.config.get<string>("DOCKER_CONTEXT");
+    const prefix = context ? ["--context", context] : [];
+    const nodes = await this.runDocker([
+      ...prefix, "node", "ls", "--format", "{{.ID}}|{{.Status}}|{{.Availability}}",
+    ]);
+    if (nodes.exitCode !== 0 || !nodes.stdout.trim()) return false;
+    const ids: string[] = [];
+    for (const line of nodes.stdout.split("\n").filter(Boolean)) {
+      const [rawId, status, availability] = line.split("|");
+      const id = rawId?.trim().replace(/\s+\*$/, "");
+      if (!id || !/^[a-z0-9]{20,40}$/.test(id) ||
+          status !== "Ready" || availability !== "Active") return false;
+      ids.push(id);
+    }
+    if (!ids.length || ids.length > 128) return false;
+
+    for (const service of services) {
+      const current = await this.runDocker([
+        ...prefix, "service", "inspect", service,
+        "--format", "{{json .Spec.TaskTemplate}}",
+      ]);
+      if (current.exitCode !== 0 || !gpuDetachedFromTaskTemplate(current.stdout)) return false;
+    }
+
+    for (const id of ids) {
+      const tasks = await this.runDocker([
+        ...prefix, "node", "ps", id, "--no-trunc",
+        "--format", "{{.ID}}|{{.Name}}|{{.CurrentState}}",
+      ]);
+      if (tasks.exitCode !== 0) return false;
+      for (const line of tasks.stdout.split("\n").filter(Boolean)) {
+        const [taskId, name, state] = line.split("|");
+        if (!name || ![...services].some((service) => name.startsWith(service + "."))) continue;
+        if (!taskId || !/^[a-z0-9]{20,80}$/.test(taskId) || !state) return false;
+        if (/^(?:Shutdown|Complete|Failed|Rejected)\b/i.test(state)) continue;
+        const task = await this.runDocker([
+          ...prefix, "inspect", "--type", "task", taskId,
+          "--format", "{{json .Spec}}",
+        ]);
+        if (task.exitCode !== 0 || !gpuDetachedFromTaskTemplate(task.stdout)) return false;
+      }
+    }
+    return true;
+  }
+
   private inspectStackServices(stackName: string) {
     const dockerContext = this.config.get<string>("DOCKER_CONTEXT");
     const args = [
@@ -280,3 +339,25 @@ export class StackRolloutService {
     return Buffer.concat(chunks).toString("utf8").trim();
   }
 }
+
+/** Strictly reject any task template that may still expose an NVIDIA GPU. */
+export function gpuDetachedFromTaskTemplate(json: string): boolean {
+  try {
+    const spec = JSON.parse(json) as {
+      ContainerSpec?: { Env?: unknown };
+      Resources?: { Reservations?: { GenericResources?: unknown } };
+    };
+    if (!spec || typeof spec !== "object" || !spec.ContainerSpec ||
+        !Array.isArray(spec.ContainerSpec.Env) ||
+        !spec.ContainerSpec.Env.every((entry) => typeof entry === "string")) return false;
+    const env = spec.ContainerSpec.Env as string[];
+    if (!env.includes("NVIDIA_VISIBLE_DEVICES=void") ||
+        env.some((entry) => entry.startsWith("NVIDIA_VISIBLE_DEVICES=") &&
+          entry !== "NVIDIA_VISIBLE_DEVICES=void")) return false;
+    const generic = spec.Resources?.Reservations?.GenericResources;
+    return generic === undefined || (Array.isArray(generic) && generic.length === 0);
+  } catch {
+    return false;
+  }
+}
+
