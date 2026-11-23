@@ -213,6 +213,18 @@ async function main() {
       clientSecret: web.clientSecret, userId: userAId,
       userName: "oidc-live-" + suffix + "-a", password: "E2e!Test-" + suffix + "-a",
     });
+    // #498: prove repeated *fresh* confidential Web authorization requests,
+    // distinct codes/states and separate successful token exchanges. A 200
+    // discovery response or one successful browser redirect is insufficient.
+    for (let replay = 0; replay < 2; replay += 1) {
+      await runOidcAuthorizationE2E({
+        issuer, projectId: projectA, foreignProjectId: projectB,
+        clientId: web.clientId, clientSecret: web.clientSecret,
+        userId: userAId, userName: "oidc-live-" + suffix + "-a",
+        password: "E2e!Test-" + suffix + "-a",
+      });
+    }
+    console.log("PASS: three fresh confidential Web PKCE code exchanges and signed tokens on tenant A (#498)");
     const spa = await clients.provision({
       name: "Isolated SPA " + suffix, type: "SPA",
       redirectUris: ["https://localhost:8443/callback"],

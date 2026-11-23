@@ -121,7 +121,16 @@ export async function runOidcAuthorizationE2E(input: {
       body,
       signal: AbortSignal.timeout(20000),
     });
-    if (!tokenResponse.ok) throw new Error("ZITADEL code exchange denied HTTP " + tokenResponse.status);
+    if (!tokenResponse.ok) {
+      // A healthy discovery/authorize callback does not prove that ZITADEL
+      // persisted the authorization request until redemption (#498).
+      // Classify only the known failure signature. Never print the response,
+      // one-time code, verifier, state, URL query or upstream request body.
+      const errorBody = await tokenResponse.text().catch(() => "");
+      const reason = errorBody.includes("Errors.AuthRequest.NotFound")
+        ? "OIDC_AUTH_REQUEST_NOT_FOUND" : "OIDC_TOKEN_EXCHANGE_DENIED";
+      throw new Error("ZITADEL " + reason + " HTTP " + tokenResponse.status);
+    }
     const tokens = await tokenResponse.json() as { id_token?: string; access_token?: string; refresh_token?: string };
     assert.ok(tokens.id_token && tokens.access_token && tokens.refresh_token,
       "OIDC exchange returned incomplete tokens (including offline refresh)");
