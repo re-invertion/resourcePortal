@@ -77,3 +77,26 @@ it("guards modified configuration edits against silent Cancel and route navigati
   expect(fetchMock.mock.calls.some(([, init]) => ["POST", "PATCH", "DELETE"].includes((init as RequestInit | undefined)?.method ?? ""))).toBe(false);
   nativeConfirm.mockRestore();
 });
+
+it.each([
+  ["variables", 0],
+  ["secrets", 1],
+  ["configs", 2],
+] as const)("validates required value for new %s before enabling Create", async (kind, index) => {
+  const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => json([]));
+  vi.stubGlobal("fetch", fetchMock);
+  render(<AppGroupConfig tenantId="t1" appGroupId="ag1" />);
+  fireEvent.click(screen.getAllByRole("button", { name: "Add" })[index]);
+  fireEvent.change(screen.getByRole("textbox", { name: /Name/ }), { target: { value: "entry" } });
+  const create = screen.getByRole("button", { name: "Create" }) as HTMLButtonElement;
+  expect(create.disabled).toBe(true);
+  const value = screen.getByRole("textbox", { name: "Value" });
+  expect(value.hasAttribute("required")).toBe(true);
+  expect(value.getAttribute("aria-required")).toBe("true");
+  fireEvent.change(value, { target: { value: "configuration-value" } });
+  expect(create.disabled).toBe(false);
+  fireEvent.click(create);
+  await waitFor(() => expect(fetchMock.mock.calls.some(([url, opts]) =>
+    String(url).endsWith(`/${kind}`) && opts?.method === "POST"
+  )).toBe(true));
+});
