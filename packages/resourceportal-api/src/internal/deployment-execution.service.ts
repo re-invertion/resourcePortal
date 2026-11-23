@@ -1751,7 +1751,7 @@ export class DeploymentExecutionService {
       },
     });
     const snapshotGpuZeroIds = new Set(snapshot.singleApps
-      .filter((app) => app.resources.gpu === 0)
+      .filter((app) => app.resources?.gpu === 0)
       .map((app) => app.id));
     const detachedGpu = detachedGpuCandidates.filter((device) =>
       device.allocatedSingleAppId &&
