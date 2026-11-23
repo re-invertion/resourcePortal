@@ -438,3 +438,26 @@ it("blocks editing while environment loads and preserves unseen server keys on s
   await waitFor(() => expect(patches).toHaveLength(1));
   expect(patches[0].environment).toEqual({ DATABASE_URL: "server-old", NEW_KEY: "new-local-value" });
 });
+
+it("retains edited environment text after rejected navigation and delayed rehydration", async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/single-apps")) return json([{id:"app1",name:"checkout",image:"nginx:latest",runtimeState:"Running"}]);
+    if (url.endsWith("/runtime-config")) return json({environment:{DATABASE_URL:"server-old"}});
+    if (url.endsWith("/gpu-devices")) return json({enabled:false,quota:0,devices:[]});
+    return json([]);
+  });
+  vi.stubGlobal("fetch",fetchMock);
+  const confirm = vi.spyOn(window,"confirm").mockReturnValue(false);
+  render(<ApplicationEdit tenantId="t1" appGroupId="ag1" appId="app1" subsection="environment" />);
+  const field = await screen.findByRole("textbox",{name:"Environment value 1"});
+  await waitFor(()=>expect(field).toHaveProperty("value","server-old"));
+  fireEvent.change(field,{target:{value:"unsaved-new"}});
+  expect(screen.getByText("Unsaved form changes")).toBeTruthy();
+  fireEvent.click(screen.getByRole("navigation",{name:"Application sections"}).getElementsByTagName("a")[0]);
+  expect(confirm).toHaveBeenCalled();
+  expect(field).toHaveProperty("value","unsaved-new");
+  await act(async()=>{await Promise.resolve();});
+  expect(field).toHaveProperty("value","unsaved-new");
+  confirm.mockRestore();
+});
