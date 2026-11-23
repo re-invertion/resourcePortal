@@ -142,6 +142,29 @@ describe("#442 MCP identity-only upstream OAuth PKCE, tenant scope and replay", 
     }, origin)).rejects.toThrow("MCP resource audience mismatch");
   });
 
+  it("classifies missing upstream authorization requests without exposing OAuth secrets", async () => {
+    const f = fixture();
+    const { state } = await f.svc.start(input, origin);
+    f.transport.mockImplementation((_, stage) => {
+      if (stage === "code-exchange") return Promise.resolve(new Response(JSON.stringify({
+        error: "invalid_request", error_description: "Errors.AuthRequest.NotFound",
+        debug: "authorization_code=SECRET-CODE",
+      }), { status: 400 }));
+      throw new Error("Unexpected stage");
+    });
+    let response: unknown;
+    try {
+      await f.svc.exchange("SECRET-CODE", state, origin);
+    } catch (error) {
+      response = error && typeof error === "object" && "getResponse" in error
+        ? (error as { getResponse: () => unknown }).getResponse() : error;
+    }
+    expect(response).toMatchObject({ code: "MCP_IDENTITY_AUTH_REQUEST_NOT_FOUND" });
+    expect(JSON.stringify(response)).not.toContain("SECRET-CODE");
+    expect(JSON.stringify(response)).not.toContain(state);
+    expect(JSON.stringify(response)).not.toContain("Errors.AuthRequest.NotFound");
+  });
+
   it("rejects wrong origin, missing state and stale signed state before token request", async () => {
     const f = fixture();
     await expect(f.svc.start(input, "https://attacker.example.test"))

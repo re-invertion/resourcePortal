@@ -180,7 +180,20 @@ export class McpUpstreamLoginService {
       }),
       signal: AbortSignal.timeout(10_000),
     });
-    if (!response.ok) throw new UnauthorizedException("MCP identity code exchange denied");
+    if (!response.ok) {
+      // ZITADEL can return Errors.AuthRequest.NotFound even when the browser
+      // received a fresh code (#498). Classify the response without ever
+      // logging or returning code, state, verifier, upstream body or token.
+      const failure = await boundedJson(response).catch(() => null);
+      const missingRequest = failure?.error_description === "Errors.AuthRequest.NotFound" ||
+        failure?.error === "Errors.AuthRequest.NotFound";
+      throw new UnauthorizedException({
+        code: missingRequest ? "MCP_IDENTITY_AUTH_REQUEST_NOT_FOUND" : "MCP_IDENTITY_CODE_EXCHANGE_DENIED",
+        message: missingRequest
+          ? "The identity provider could not find this sign-in request; start a new sign-in"
+          : "MCP identity code exchange denied",
+      });
+    }
     const payload = await boundedJson(response);
     if (typeof payload.id_token !== "string" || payload.id_token.length > 32_768 ||
         typeof payload.access_token !== "string" || !payload.access_token ||
