@@ -79,22 +79,24 @@ it("guards modified configuration edits against silent Cancel and route navigati
 });
 
 it.each([
-  ["variables", 0],
-  ["secrets", 1],
-  ["configs", 2],
-] as const)("validates required value for new %s before enabling Create", async (kind, index) => {
+  ["variables", 0, false],
+  ["secrets", 1, true],
+  ["configs", 2, false],
+] as const)("preserves valid empty values while enforcing new secret value for %s", async (kind, index, needsValue) => {
   const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => json([]));
   vi.stubGlobal("fetch", fetchMock);
   render(<AppGroupConfig tenantId="t1" appGroupId="ag1" />);
   fireEvent.click(screen.getAllByRole("button", { name: "Add" })[index]);
   fireEvent.change(screen.getByRole("textbox", { name: /Name/ }), { target: { value: "entry" } });
   const create = screen.getByRole("button", { name: "Create" }) as HTMLButtonElement;
-  expect(create.disabled).toBe(true);
   const value = screen.getByRole("textbox", { name: kind === "configs" ? "Content" : "Value" });
-  expect(value.hasAttribute("required")).toBe(true);
-  expect(value.getAttribute("aria-required")).toBe("true");
-  fireEvent.change(value, { target: { value: "configuration-value" } });
-  expect(create.disabled).toBe(false);
+  expect(value.hasAttribute("required")).toBe(needsValue);
+  expect(value.getAttribute("aria-required")).toBe(needsValue ? "true" : null);
+  expect(create.disabled).toBe(needsValue);
+  if (needsValue) {
+    fireEvent.change(value, { target: { value: "secret-value" } });
+    expect(create.disabled).toBe(false);
+  }
   fireEvent.click(create);
   await waitFor(() => expect(fetchMock.mock.calls.some(([url, opts]) =>
     String(url).endsWith(`/${kind}`) && opts?.method === "POST"
