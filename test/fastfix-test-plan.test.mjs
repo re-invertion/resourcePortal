@@ -793,6 +793,8 @@ test("GPU change is classified and requires physical NVIDIA Swarm security gate"
     "packages/resourceportal-api/src/app-groups/nvidia-gpu-identity-immutable.spec.ts",
     "packages/resourceportal-api/src/internal/nvidia-gpu-rollout-cleanup.spec.ts",
     "packages/resourceportal-api/src/internal/nvidia-gpu-release-admission.spec.ts",
+    "packages/resourceportal-api/src/internal/nvidia-gpu-detach-proof.spec.ts",
+    "packages/resourceportal-api/src/internal/nvidia-gpu-release-transfer.spec.ts",
     "packages/resourceportal-api/src/internal/nvidia-gpu-rollback-ownership.spec.ts",
     "packages/resourceportal-api/src/internal/deployment-execution.service.ts",
     "packages/resourceportal-api/src/internal/stack-rollout.service.ts",
