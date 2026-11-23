@@ -396,3 +396,25 @@ it("distinguishes HTTP endpoint API failures from a valid empty application list
   await waitFor(() => expect(fetchMock.mock.calls.filter(([path]) =>
     String(path).endsWith("/single-apps/app1/http-endpoints")).length).toBeGreaterThanOrEqual(2));
 });
+
+it("does not overwrite dirty environment editor when a delayed runtime GET resolves", async () => {
+  let completeRuntime!: (value: Response) => void;
+  const pendingRuntime = new Promise<Response>(resolve => { completeRuntime = resolve; });
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/single-apps")) return json([{
+      id: "app1", name: "checkout", image: "nginx:latest", runtimeState: "Running"
+    }]);
+    if (url.endsWith("/runtime-config")) return pendingRuntime;
+    if (url.endsWith("/gpu-devices")) return json({ enabled: false, quota: 0, devices: [] });
+    return json([]);
+  }));
+  render(<ApplicationEdit tenantId="t1" appGroupId="ag1" appId="app1" subsection="environment" />);
+  await screen.findByRole("heading", { name: "checkout", level: 1 });
+  fireEvent.click(screen.getByRole("button", { name: "Add variable" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Environment name 1" }), { target: { value: "DATABASE_URL" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Environment value 1" }), { target: { value: "uncommitted-edit" } });
+  completeRuntime(json({ environment: { DATABASE_URL: "server-old" } }));
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "Environment value 1" })).toHaveProperty("value", "uncommitted-edit"));
+  expect(screen.getByText("Unsaved form changes")).toBeTruthy();
+});
