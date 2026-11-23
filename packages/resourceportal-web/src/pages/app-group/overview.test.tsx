@@ -22,3 +22,20 @@ it("#399 §13 separates intentional stop, health, sync, draft and attention", ()
   expect(screen.getByText("No known blocker")).toBeTruthy();
   expect(screen.getByText("Up to date")).toBeTruthy();
 });
+
+it("renders readable App Group and embedded app statuses, preserving raw status semantics", () => {
+  render(<AppGroupOverview tenantId="t1" group={{
+    id: "ag-status", name: "services", runtimeState: "PENDING_DEPLOYMENT",
+    effectiveRuntimeState: "STARTING_UP", health: "HEALTH_CHECK_PENDING",
+    driftStatus: "OUT_OF_SYNC", hasPendingChanges: true,
+    singleApps: [{ id: "app1", name: "queue-worker", runtimeState: "PENDING_DEPLOYMENT",
+      effectiveRuntimeState: "STARTING_UP", health: "HEALTH_CHECK_PENDING" }],
+  }} />);
+  expect(screen.getByText("Pending deployment")).toBeTruthy();
+  expect(screen.getAllByText("Starting up").length).toBeGreaterThan(0);
+  expect(screen.getByText("Health check pending")).toBeTruthy();
+  expect(screen.getByText("Out of sync")).toBeTruthy();
+  for (const technical of ["PENDING_DEPLOYMENT", "STARTING_UP", "HEALTH_CHECK_PENDING", "OUT_OF_SYNC"]) {
+    expect(screen.queryByText(technical)).toBeNull();
+  }
+});
