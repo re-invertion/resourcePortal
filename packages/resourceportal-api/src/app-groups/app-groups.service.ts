@@ -2502,8 +2502,8 @@ export class AppGroupsService {
             cpu: singleApp.cpu.toString(),
             memoryBytes: singleApp.memoryBytes.toString(),
             gpu: singleApp.gpu,
-            gpuUuid: singleApp.gpuAllocation?.uuid ?? null,
-            gpuNodeId: singleApp.gpuAllocation?.remoteLocation?.swarmNodeId ?? null,
+            gpuUuid: singleApp.gpu > 0 ? singleApp.gpuAllocation?.uuid ?? null : null,
+            gpuNodeId: singleApp.gpu > 0 ? singleApp.gpuAllocation?.remoteLocation?.swarmNodeId ?? null : null,
           },
           environment: protectSensitiveEnvironment(this.jsonObjectToRecord(singleApp.environment), this.encryption),
           variables: singleApp.variableAttachments.map((attachment) => ({
