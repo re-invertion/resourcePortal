@@ -350,7 +350,7 @@ export function gpuDetachedFromTaskTemplate(json: string): boolean {
     if (!spec || typeof spec !== "object" || !spec.ContainerSpec ||
         !Array.isArray(spec.ContainerSpec.Env) ||
         !spec.ContainerSpec.Env.every((entry) => typeof entry === "string")) return false;
-    const env = spec.ContainerSpec.Env as string[];
+    const env = spec.ContainerSpec.Env;
     if (!env.includes("NVIDIA_VISIBLE_DEVICES=void") ||
         env.some((entry) => entry.startsWith("NVIDIA_VISIBLE_DEVICES=") &&
           entry !== "NVIDIA_VISIBLE_DEVICES=void")) return false;
