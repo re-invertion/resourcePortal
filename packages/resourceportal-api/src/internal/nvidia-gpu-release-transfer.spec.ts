@@ -46,7 +46,7 @@ function scenario(options: {
     deploymentEvent: { create: vi.fn().mockResolvedValue({}) },
   };
   const prisma = {
-    gpuDevice: { findMany: vi.fn().mockImplementation(({ where }) =>
+    gpuDevice: { findMany: vi.fn().mockImplementation(({ where }: { where: { allocatedSingleApp: { pendingDeletion: boolean } } }) =>
       Promise.resolve(where.allocatedSingleApp.pendingDeletion ? [] : [device])) },
     $transaction: vi.fn((callback: (client: typeof tx) => Promise<unknown>) =>
       callback(tx)),
@@ -89,17 +89,19 @@ describe("GPU ownership release on successful gpu:0 deployment (#526)", () => {
     const result = await complete(service);
     expect(result.status).toBe(DeploymentStatus.Succeeded);
     expect(rollout.verifyDetachedGpuServiceTasks).toHaveBeenCalledWith("rp_group", ["source"]);
-    expect(updateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({
+    const releaseCall: unknown = updateMany.mock.calls[0]?.[0];
+    expect(releaseCall).toMatchObject({
+      where: {
         uuid: GPU, allocatedSingleAppId: APP, allocationState: "Allocated",
-      }),
+      },
       data: {
         allocatedSingleAppId: null, allocationState: "Free", allocatedAt: null,
       },
-    }));
-    expect(tx.appGroupDeployment.update).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ phase: DeploymentPhase.Completed }),
-    }));
+    });
+    const deploymentCall: unknown = tx.appGroupDeployment.update.mock.calls[0]?.[0];
+    expect(deploymentCall).toMatchObject({
+      data: { phase: DeploymentPhase.Completed },
+    });
   });
 
   it("fails closed when the old GPU task cannot be proven detached", async () => {
