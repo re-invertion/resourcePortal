@@ -23,7 +23,10 @@ permissions:
 jobs:
   real-https-project-grants:
     name: Real HTTPS issuer, tenant projects, membership and revocation
-    runs-on: ubuntu-latest
+    # Playwright 1.63 dependency package names are not available on Ubuntu 26.04;
+    # pin the browser integration runner to a supported distro instead of
+    # bypassing browser dependency installation or skipping the live gate.
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
       TENANT_OIDC_E2E_ISOLATED: 'true'
