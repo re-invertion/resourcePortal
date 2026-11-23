@@ -75,6 +75,8 @@ it("saves tenant OAuth alone with managed DNS off and no Zone ID", async () => {
   const state = {
     provider: "Cloudflare", enabled: false, available: false, configured: false,
     tokenConfigured: false, oauthClientSecretConfigured: false, zoneId: null,
+    // Hydration marker: wait for the GET -> useEffect form state sync before editing.
+    oauthClientId: "existing-tenant-client",
     zoneName: null, baseDomain: "portal.resource-portal.pl",
     targetHostname: "portal.resource-portal.pl", lastValidatedAt: null, lastError: null,
   };
@@ -87,6 +89,11 @@ it("saves tenant OAuth alone with managed DNS off and no Zone ID", async () => {
 
   render(<PlatformDnsPage />);
   await waitFor(() => expect(screen.getAllByText("portal.resource-portal.pl").length).toBeGreaterThanOrEqual(2));
+  // The domain details can paint before useEffect copies the fetched OAuth ID
+  // into the controlled form. Editing at that point may be overwritten by the
+  // pending hydration and falsely fail the PATCH contract under full-suite load.
+  const clientId = screen.getByLabelText(/OAuth Client ID/i) as HTMLInputElement;
+  await waitFor(() => expect(clientId.value).toBe("existing-tenant-client"));
   const zone = screen.getByLabelText(/Cloudflare Zone ID/i) as HTMLInputElement;
   expect(zone.value).toBe("");
   expect(zone.required).toBe(false);
@@ -96,6 +103,7 @@ it("saves tenant OAuth alone with managed DNS off and no Zone ID", async () => {
   fireEvent.change(screen.getByLabelText(/OAuth Client secret/i), {
     target: { value: "tenant-oauth-secret" },
   });
+  expect(clientId.value).toBe("tenant-oauth-client");
   const save = screen.getByRole("button", { name: "Save configuration" });
   expect((save.closest("form") as HTMLFormElement).checkValidity()).toBe(true);
   fireEvent.click(save);
@@ -103,11 +111,14 @@ it("saves tenant OAuth alone with managed DNS off and no Zone ID", async () => {
     const patch = fetchMock.mock.calls.find(([url, init]) =>
       String(url) === "/api/platform/dns" && init?.method === "PATCH");
     expect(patch).toBeTruthy();
-    expect(JSON.parse(String(patch?.[1]?.body))).toMatchObject({
+    const payload = JSON.parse(String(patch?.[1]?.body)) as Record<string, unknown>;
+    expect(payload).toMatchObject({
       enabled: false,
       oauthClientId: "tenant-oauth-client",
       oauthClientSecret: "tenant-oauth-secret",
     });
+    expect(payload).not.toHaveProperty("zoneId");
+    expect(payload).not.toHaveProperty("apiToken");
   });
   const enable = await screen.findByLabelText("Enable managed ResourcePortal domains");
   fireEvent.click(enable);
