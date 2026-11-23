@@ -1733,6 +1733,40 @@ export class DeploymentExecutionService {
       }
     }
 
+    // Only a successfully converged gpu:0 rollout can detach a live app's GPU.
+    // Capture candidates before the transaction; revalidate ownership and the
+    // draft revision under the shared allocation lock before releasing.
+    const detachedGpuCandidates = await this.prisma.gpuDevice.findMany({
+      where: {
+        allocatedSingleApp: {
+          appGroupId: deployment.appGroupId,
+          pendingDeletion: false,
+          gpu: 0,
+        },
+      },
+      select: {
+        uuid: true,
+        allocatedSingleAppId: true,
+        allocatedSingleApp: { select: { name: true } },
+      },
+    });
+    const snapshotGpuZeroIds = new Set(snapshot.singleApps
+      .filter((app) => app.resources?.gpu === 0)
+      .map((app) => app.id));
+    const detachedGpu = detachedGpuCandidates.filter((device) =>
+      device.allocatedSingleAppId &&
+      snapshotGpuZeroIds.has(device.allocatedSingleAppId));
+    if (detachedGpu.length && !await this.stackRolloutService.verifyDetachedGpuServiceTasks(
+      stackName, detachedGpu.map((device) => this.serviceName(device.allocatedSingleApp!.name)),
+    )) {
+      // Never commit a release while an old GPU task might still be running.
+      return this.rollbackAfterRuntimeFailure(
+        deployment, snapshot,
+        "GPU runtime detach unverified",
+        "Current GPU-free service specification or historical Swarm tasks could not be verified",
+      );
+    }
+
     const completed = await this.prisma.$transaction(async (tx) => {
       const deletedSingleApps = await tx.singleApp.findMany({
         where: {
@@ -1759,10 +1793,41 @@ export class DeploymentExecutionService {
         await tx.singleApp.deleteMany({ where: { id: { in: ids } } });
       }
 
+      if (detachedGpu.length) {
+        // Freeze reservation changes before checking the latest draft
+        // revision; reading it before acquiring this lock races with reserve().
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(2026, 10427) IS NULL AS "locked"`;
+      }
       const appGroup = await tx.appGroup.findUniqueOrThrow({
         where: { id: deployment.appGroupId },
         select: { runtimeDraftRevision: true },
       });
+      if (detachedGpu.length) {
+        // A concurrently edited draft is not the deployed configuration.
+        // Preserve its reservation and require a fresh rollout instead.
+        if (appGroup.runtimeDraftRevision === deployment.sourceDraftRevision) {
+          for (const device of detachedGpu) {
+            const claimed = await tx.gpuDevice.updateMany({
+              where: {
+                uuid: device.uuid,
+                allocatedSingleAppId: device.allocatedSingleAppId,
+                allocationState: "Allocated",
+                allocatedSingleApp: {
+                  appGroupId: deployment.appGroupId,
+                  gpu: 0,
+                  pendingDeletion: false,
+                },
+              },
+              data: {
+                allocatedSingleAppId: null, allocationState: "Free", allocatedAt: null,
+              },
+            });
+            if (claimed.count !== 1) {
+              throw new ConflictException("GpuDetachOwnershipChanged");
+            }
+          }
+        }
+      }
       const isExplicitRollback = deployment.rollbackTargetVersion !== null;
       const next = await tx.appGroupDeployment.update({
         where: { id: deploymentId },

@@ -19,7 +19,7 @@ describe("GPU deployment snapshot (#368)", () => {
       };
     };
 
-    const snapshot = build.buildStackConfigSnapshot({
+    const draft = {
       id: "00000000-0000-4000-8000-000000000001",
       tenantId: "00000000-0000-4000-8000-000000000002",
       name: "gpu-group",
@@ -58,12 +58,22 @@ describe("GPU deployment snapshot (#368)", () => {
         networkAttachments: [],
         volumeAttachments: [],
       }],
-    });
+    };
+    const snapshot = build.buildStackConfigSnapshot(draft);
 
     expect(snapshot.singleApps[0]?.resources).toMatchObject({
       gpu: 1,
       gpuUuid: GPU,
       gpuNodeId: NODE,
+    });
+
+    // Changing gpu:1 to gpu:0 must not leak the old reservation into
+    // preview, deployment artifacts, or a future rollback target.
+    draft.singleApps[0].gpu = 0;
+    expect(build.buildStackConfigSnapshot(draft).singleApps[0]?.resources).toMatchObject({
+      gpu: 0,
+      gpuUuid: null,
+      gpuNodeId: null,
     });
   });
 });

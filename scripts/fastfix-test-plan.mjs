@@ -26,6 +26,8 @@ const commands = {
       "src/app-groups/nvidia-gpu-identity-immutable.spec.ts",
       "src/internal/nvidia-gpu-rollout-cleanup.spec.ts",
       "src/internal/nvidia-gpu-release-admission.spec.ts",
+      "src/internal/nvidia-gpu-detach-proof.spec.ts",
+      "src/internal/nvidia-gpu-release-transfer.spec.ts",
       "src/internal/nvidia-gpu-rollback-ownership.spec.ts",
       "src/internal/runtime-drift-reconciler.spec.ts",
       "src/operations/executors/app-group-delete-operation.executor.spec.ts"],
@@ -274,7 +276,7 @@ const classifiers = [
 
   [/^packages\/resourceportal-api\/src\/app-groups\/nvidia-gpu-(?:draft-discard(?:\.spec)?|deployment-snapshot\.spec)\.ts$/, ["gpu-security", "applications"]],
   [/^packages\/resourceportal-api\/src\/app-groups\/nvidia-gpu-identity-immutable\.spec\.ts$/, ["gpu-security", "applications"]],
-  [/^packages\/resourceportal-api\/src\/internal\/nvidia-gpu-(?:rollout-cleanup|release-admission|rollback-ownership)\.spec\.ts$/, ["gpu-security", "deployment-rollout"]],
+  [/^packages\/resourceportal-api\/src\/internal\/nvidia-gpu-(?:rollout-cleanup|release-admission|rollback-ownership|detach-proof|release-transfer)\.spec\.ts$/, ["gpu-security", "deployment-rollout"]],
   [/^packages\/resourceportal-api\/src\/internal\/stack-rollout\.service\.ts$/, ["gpu-security", "deployment-rollout"]],
   [/^packages\/resourceportal-api\/src\/internal\/explicit-rollback-completion\.spec\.ts$/, ["gpu-security", "deployment-rollout"]],
 
