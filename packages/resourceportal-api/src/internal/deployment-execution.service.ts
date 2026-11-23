@@ -1793,12 +1793,16 @@ export class DeploymentExecutionService {
         await tx.singleApp.deleteMany({ where: { id: { in: ids } } });
       }
 
+      if (detachedGpu.length) {
+        // Freeze reservation changes before checking the latest draft
+        // revision; reading it before acquiring this lock races with reserve().
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(2026, 10427) IS NULL AS "locked"`;
+      }
       const appGroup = await tx.appGroup.findUniqueOrThrow({
         where: { id: deployment.appGroupId },
         select: { runtimeDraftRevision: true },
       });
       if (detachedGpu.length) {
-        await tx.$queryRaw`SELECT pg_advisory_xact_lock(2026, 10427) IS NULL AS "locked"`;
         // A concurrently edited draft is not the deployed configuration.
         // Preserve its reservation and require a fresh rollout instead.
         if (appGroup.runtimeDraftRevision === deployment.sourceDraftRevision) {
