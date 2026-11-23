@@ -100,3 +100,18 @@ it.each([
     String(url).endsWith(`/${kind}`) && opts?.method === "POST"
   )).toBe(true));
 });
+
+it("prompts only once when multiple resource editors have unsaved changes", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => json([])));
+  const nativeConfirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+  render(<><a href="/tenants/t1/app-groups/ag1/networking">Networking</a><AppGroupConfig tenantId="t1" appGroupId="ag1" /></>);
+  const addButtons = screen.getAllByRole("button", { name: "Add" });
+  fireEvent.click(addButtons[0]);
+  fireEvent.click(addButtons[1]);
+  fireEvent.change(screen.getAllByRole("textbox", { name: /Name/ })[0], { target: { value: "FIRST" } });
+  fireEvent.change(screen.getAllByRole("textbox", { name: /Name/ })[1], { target: { value: "SECOND" } });
+  fireEvent.click(screen.getByRole("link", { name: "Networking" }));
+  expect(nativeConfirm).toHaveBeenCalledTimes(1);
+  expect(nativeConfirm).toHaveBeenCalledWith("You have unsaved changes. Leave this page and discard your edits?");
+  nativeConfirm.mockRestore();
+});
