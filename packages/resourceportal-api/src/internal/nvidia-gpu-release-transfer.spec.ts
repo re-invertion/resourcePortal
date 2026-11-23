@@ -46,7 +46,8 @@ function scenario(options: {
     deploymentEvent: { create: vi.fn().mockResolvedValue({}) },
   };
   const prisma = {
-    gpuDevice: { findMany: vi.fn().mockResolvedValue([device]) },
+    gpuDevice: { findMany: vi.fn().mockImplementation(({ where }) =>
+      Promise.resolve(where.allocatedSingleApp.pendingDeletion ? [] : [device])) },
     $transaction: vi.fn((callback: (client: typeof tx) => Promise<unknown>) =>
       callback(tx)),
   };
