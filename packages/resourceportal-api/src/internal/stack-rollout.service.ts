@@ -68,11 +68,41 @@ export class StackRolloutService {
       await this.sleep(pollIntervalMs);
     }
 
+    // Collect a bounded, allow-listed diagnosis before rollback removes the
+    // failed Swarm tasks. This result is persisted in the deployment error/event.
+    const diagnosis = await this.inspectFailedRolloutTasks(params.expectedServices);
     return {
       success: false,
       message: "Rollout timed out",
-      details: lastDetails || "No rollout status available",
+      details: [lastDetails || "No rollout status available", diagnosis].join("\n"),
     };
+  }
+
+  private async inspectFailedRolloutTasks(services: ExpectedService[]): Promise<string> {
+    const dockerContext = this.config.get<string>("DOCKER_CONTEXT");
+    const prefix = dockerContext ? ["--context", dockerContext] : [];
+    const findings: string[] = [];
+    // Never issue an unbounded number of extra queries on the failure path.
+    for (const service of services.slice(0, 16)) {
+      if (!/^[a-zA-Z0-9_-]{1,128}$/.test(service.name)) continue;
+      const tasks = await this.runDocker([
+        ...prefix, "service", "ps", "--no-trunc", "--format", "{{.Error}}", service.name,
+      ], 5_000);
+      const cause = tasks.exitCode === 0 ? this.taskFailureReason(tasks.stdout) : null;
+      findings.push(`${service.name}: ${cause ?? "CauseUnknown"}`);
+    }
+    return findings.length ? `Swarm task diagnostics: ${findings.join("; ")}` : "Swarm task diagnostics unavailable";
+  }
+
+  /** No untrusted Docker task content, registry tokens or tenant data in API errors. */
+  private taskFailureReason(raw: string): string | null {
+    const value = raw.toLowerCase().slice(0, 16_384);
+    if (/unauthorized|authentication required|pull access denied|insufficient_scope|denied:/.test(value)) return "ImagePullAuthorizationFailed";
+    if (/manifest unknown|no such image|image not found/.test(value)) return "ImageNotFound";
+    if (/no suitable node|insufficient resources|no node available/.test(value)) return "SwarmPlacementRejected";
+    if (/oomkilled|out of memory|oom killed/.test(value)) return "OutOfMemory";
+    if (/healthcheck|health check/.test(value)) return "HealthcheckFailed";
+    return null;
   }
 
   /**
@@ -139,8 +169,8 @@ export class StackRolloutService {
     return this.runDocker(args);
   }
 
-  private runDocker(args: string[]) {
-    const timeoutMs = this.positiveIntegerConfig(
+  private runDocker(args: string[], timeoutOverrideMs?: number) {
+    const timeoutMs = timeoutOverrideMs ?? this.positiveIntegerConfig(
       "DOCKER_RUNTIME_OPERATION_TIMEOUT_MS",
       120000,
     );
