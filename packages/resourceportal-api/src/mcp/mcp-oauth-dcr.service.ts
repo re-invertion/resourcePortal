@@ -286,7 +286,13 @@ export class McpOAuthDcrService {
     // Registration metadata is returned by the upstream. Restrict which
     // internal endpoint is contacted and never send its bearer to an
     // unrelated management path or a URL with embedded credentials.
-    if (url.protocol !== "https:" || url.host !== this.issuerHost() ||
+    // On an HTTPS issuer behind a TLS-terminating ingress, actual ZITADEL
+    // may advertise an http:// issuer-host registration_client_uri. This
+    // metadata is only a locator: never fetch that URI. Rebuild the rollback
+    // request against the configured internal ZITADEL origin, restrict its
+    // path and issuer host, and retain the per-registration Bearer only there.
+    if ((url.protocol !== "https:" && url.protocol !== "http:") ||
+        url.host !== this.issuerHost() ||
         url.username || url.password || url.search || url.hash ||
         !/^\/oauth\/v2\/register\/[a-zA-Z0-9._~-]+$/.test(url.pathname)) {
       throw new BadGatewayException("ZITADEL DCR rollback URI was not trusted");
