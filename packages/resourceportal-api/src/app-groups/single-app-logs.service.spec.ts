@@ -45,6 +45,30 @@ describe("SingleAppLogsService", () => {
     await expect(service.list("tenant", "group", "app")).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 
+  it("redacts OAuth callback codes, state, authorization headers and cookies before exposing logs", async () => {
+    const { service } = fixture();
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ lines: [
+      "2026-11-20 GET /oauth2/callback?code=SECRET_CODE&state=SECRET_STATE status=500",
+      "GET /api/auth/callback?code=OTHER_CODE&state=OTHER_STATE 302",
+      "GET /oauth/v2/authorize?state=THIRD_STATE&nonce=NONCE&code_challenge=CHALLENGE",
+      "GET /path?client_id=public-client&access_token=SECRET_ACCESS status=401",
+      "Authorization: Bearer SECRET_BEARER",
+      "Cookie: rp_session=SECRET_COOKIE",
+      "normal healthz status=200",
+    ] }) });
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await service.list("tenant", "group", "app");
+    const output = result.lines.join("\n");
+    for (const secret of ["SECRET_CODE", "SECRET_STATE", "OTHER_CODE", "OTHER_STATE",
+      "THIRD_STATE", "NONCE", "CHALLENGE", "SECRET_ACCESS", "SECRET_BEARER", "SECRET_COOKIE"]) {
+      expect(output).not.toContain(secret);
+    }
+    expect(output).toContain("/oauth2/callback?[REDACTED]");
+    expect(output).toContain("client_id=public-client&access_token=[REDACTED]");
+    expect(output).toContain("normal healthz status=200");
+    expect(output).toContain("status=500");
+  });
+
   it("caps the response to 64KiB", async () => {
     const { service } = fixture();
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve ({ lines: ["x".repeat(100000)] }) }));

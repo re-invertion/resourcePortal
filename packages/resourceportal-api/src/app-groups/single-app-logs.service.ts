@@ -37,11 +37,31 @@ export class SingleAppLogsService {
           !Array.isArray(result.lines) || !result.lines.every((line) => typeof line === "string")) {
         throw new Error("Invalid worker response");
       }
-      return { lines: result.lines.join("\n").slice(-65536).split("\n").filter(Boolean), serviceAvailable: true };
+      // Ingress/OAuth2 proxies commonly log the FULL callback URL, including
+      // one-time codes and state (#498). Redact before returning worker logs
+      // over the UI or MCP; never assume tenant log-read implies access to
+      // OAuth credentials. Retain timestamps, paths and statuses for RCA.
+      const safeLines = result.lines.map((line) => redactOAuthLogLine(line));
+      return { lines: safeLines.join("\n").slice(-65536).split("\n").filter(Boolean), serviceAvailable: true };
     } catch {
       throw new ServiceUnavailableException("Container logs are currently unavailable");
     } finally {
       clearTimeout(timeout);
     }
   }
+}
+
+/** Mask OAuth callback/query credentials in tenant-facing container logs. */
+function redactOAuthLogLine(line: string): string {
+  return line
+    .replace(
+      /(\/(?:oauth2\/callback|api\/auth\/callback|api\/mcp\/oauth\/upstream\/callback|oauth\/v2\/authorize))\?[^\s"'<>\\]+/gi,
+      "$1?[REDACTED]",
+    )
+    .replace(
+      /([?&](?:code|state|session_state|id_token|access_token|refresh_token|code_verifier|client_secret)=)[^\s&#"'<>\\]+/gi,
+      "$1[REDACTED]",
+    )
+    .replace(/(\bAuthorization:\s*(?:Bearer|Basic)\s+)[^\s,"'\\]+/gi, "$1[REDACTED]")
+    .replace(/(\b(?:Cookie|Set-Cookie):\s*)[^\r\n]+/gi, "$1[REDACTED]");
 }
