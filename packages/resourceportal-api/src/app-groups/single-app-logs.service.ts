@@ -55,11 +55,11 @@ export class SingleAppLogsService {
 function redactOAuthLogLine(line: string): string {
   return line
     .replace(
-      /(\/(?:oauth2\/callback|api\/auth\/callback|api\/mcp\/oauth\/upstream\/callback|oauth\/v2\/authorize))\?[^\s"'<>\\]+/gi,
+      /(\/(?:oauth2\/callback|api\/auth\/callback|api\/mcp\/oauth\/upstream\/callback|oauth\/v2\/authorize))\?[^\s"'<>]+/gi,
       "$1?[REDACTED]",
     )
     .replace(
-      /([?&](?:code|state|session_state|id_token|access_token|refresh_token|code_verifier|client_secret)=)[^\s&#"'<>\\]+/gi,
+      /((?:[?&]|&amp;|\\u0026)(?:code|state|session_state|id_token|access_token|refresh_token|code_verifier|client_secret)=)[^\s&#"'<>\\]+/gi,
       "$1[REDACTED]",
     )
     .replace(/(\bAuthorization:\s*(?:Bearer|Basic)\s+)[^\s,"'\\]+/gi, "$1[REDACTED]")

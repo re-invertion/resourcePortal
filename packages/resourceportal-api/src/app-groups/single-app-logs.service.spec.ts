@@ -54,13 +54,15 @@ describe("SingleAppLogsService", () => {
       "GET /path?client_id=public-client&access_token=SECRET_ACCESS status=401",
       "Authorization: Bearer SECRET_BEARER",
       "Cookie: rp_session=SECRET_COOKIE",
+      "GET /oauth2/callback?code=ESC_CODE\\u0026state=ESC_STATE status=401",
+      "GET /path?refresh_token=ESC_REFRESH&amp;client_id=public-client status=403",
       "normal healthz status=200",
     ] }) });
     vi.stubGlobal("fetch", fetchMock);
     const result = await service.list("tenant", "group", "app");
     const output = result.lines.join("\n");
     for (const secret of ["SECRET_CODE", "SECRET_STATE", "OTHER_CODE", "OTHER_STATE",
-      "THIRD_STATE", "NONCE", "CHALLENGE", "SECRET_ACCESS", "SECRET_BEARER", "SECRET_COOKIE"]) {
+      "THIRD_STATE", "NONCE", "CHALLENGE", "SECRET_ACCESS", "SECRET_BEARER", "SECRET_COOKIE", "ESC_CODE", "ESC_STATE", "ESC_REFRESH"]) {
       expect(output).not.toContain(secret);
     }
     expect(output).toContain("/oauth2/callback?[REDACTED]");
