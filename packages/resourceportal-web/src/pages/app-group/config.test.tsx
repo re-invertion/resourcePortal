@@ -90,7 +90,7 @@ it.each([
   fireEvent.change(screen.getByRole("textbox", { name: /Name/ }), { target: { value: "entry" } });
   const create = screen.getByRole("button", { name: "Create" }) as HTMLButtonElement;
   expect(create.disabled).toBe(true);
-  const value = screen.getByRole("textbox", { name: "Value" });
+  const value = screen.getByRole("textbox", { name: kind === "configs" ? "Content" : "Value" });
   expect(value.hasAttribute("required")).toBe(true);
   expect(value.getAttribute("aria-required")).toBe("true");
   fireEvent.change(value, { target: { value: "configuration-value" } });
