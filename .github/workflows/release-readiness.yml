@@ -315,7 +315,7 @@ jobs:
 
       - name: Independently verify v0.2.197 RP and ZITADEL restore before merge
         env:
-          RP_ROLLBACK_EVIDENCE_OUTPUT: ${{ runner.temp }}/rp-rollback-evidence-152.json
+          RP_ROLLBACK_EVIDENCE_OUTPUT: ${{ runner.temp }}/rp-rollback-evidence-197.json
           RP_ROLLBACK_E2E_ISOLATED: 'true'
           RP_ROLLBACK_CANDIDATE_ZITADEL_IMAGE: ghcr.io/zitadel/zitadel:v4.17.0
           VALIDATION_MODE: ${{ steps.release-mode.outputs.mode }}
