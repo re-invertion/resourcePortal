@@ -84,11 +84,11 @@ describe("TenantMcpAccessGuard", () => {
   it("enforces tenant-specific user MCP allowlist at request time, including cross-tenant bearer reuse", async () => {
     const f = fixture();
     const actor = { headers: { authorization: "Bearer same-user-token" }, user: { id: "user-a" } };
-    f.settings.assertUserCanUseMcp.mockImplementation(async (tenantId: string, userId: string) => {
+    f.settings.assertUserCanUseMcp.mockImplementation((tenantId: string, userId: string) => {
       if (tenantId !== "tenant-a" || userId !== "user-a") {
-        throw new ForbiddenException("Current tenant does not grant MCP access");
+        return Promise.reject(new ForbiddenException("Current tenant does not grant MCP access"));
       }
-      return { id: "membership-id" };
+      return Promise.resolve({ id: "membership-id" });
     });
     await expect(f.guard.canActivate(contextFor({ ...actor, params: { tenantId: "tenant-a" } },
       { header: vi.fn() }))).resolves.toBe(true);
