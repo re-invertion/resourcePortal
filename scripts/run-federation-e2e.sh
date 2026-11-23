@@ -166,11 +166,11 @@ EOF
 
 
 validate_mcp_dcr() {
-  local discovery registration payload response client_id
-  discovery="$(curl --fail --silent --show-error http://localhost:8080/.well-known/openid-configuration)"
+  local discovery registration payload response client_id registration_uri registration_token registration_path
+  discovery="$(curl --fail --silent --show-error --connect-timeout 5 --max-time 15 http://localhost:8080/.well-known/openid-configuration)"
   registration="$(jq -r '.registration_endpoint // empty' <<<"$discovery")"
-  [[ -n "$registration" ]] || {
-    echo "ZITADEL discovery does not advertise registration_endpoint after MCP OAuth reconciliation" >&2
+  [[ "$registration" == "http://localhost:8080/oauth/v2/register" ]] || {
+    echo "ZITADEL isolated discovery did not advertise the expected local DCR endpoint" >&2
     return 1
   }
 
@@ -181,13 +181,40 @@ validate_mcp_dcr() {
     "response_types": ["code"],
     "token_endpoint_auth_method": "none"
   }'
-  response="$(curl --fail --silent --show-error     --request POST     --header 'content-type: application/json'     --data "$payload"     "$registration")"
-  client_id="$(jq -r '.client_id // empty' <<<"$response")"
-  [[ -n "$client_id" ]] || {
-    echo "ZITADEL DCR response did not include client_id: $response" >&2
+  # Do not echo raw OAuth registration metadata; it may contain the rollback bearer.
+  # The caller must reconcile any accepted but unreadable/timeout response before retry.
+  if ! response="$(curl --fail --silent --show-error --connect-timeout 5 --max-time 15 \
+    --request POST --header 'content-type: application/json' \
+    --data "$payload" "$registration")"; then
+    echo "Isolated ZITADEL DCR registration outcome uncertain; inspect clients before retrying" >&2
     return 1
-  }
-  echo "MCP DCR live registration succeeded: client_id=$client_id"
+  fi
+  client_id="$(jq -r '.client_id // empty' <<<"$response")"
+  registration_uri="$(jq -r '.registration_client_uri // empty' <<<"$response")"
+  registration_token="$(jq -r '.registration_access_token // empty' <<<"$response")"
+  if [[ -z "$client_id" || -z "$registration_uri" || -z "$registration_token" ]]; then
+    echo "Isolated ZITADEL accepted registration but cleanup credentials are missing: reconcile DCR clients" >&2
+    return 1
+  fi
+  # Never send the returned registration bearer to an arbitrary URI.
+  # On this isolated test issuer, only an exact local DCR client endpoint is valid.
+  registration_path="$(jq -r --arg uri "$registration_uri" '
+    if ($uri | test("^http://localhost:8080/oauth/v2/register/[A-Za-z0-9._~-]+$"))
+    then ($uri | sub("^http://localhost:8080"; "")) else empty end
+  ' <<<"{}")"
+  if [[ -z "$registration_path" ]]; then
+    echo "Isolated ZITADEL returned an untrusted DCR cleanup URI: manual reconciliation required" >&2
+    return 1
+  fi
+  # A successful registration is only a PASS when the test client is deleted.
+  # A rollback failure is never silently accepted as a healthy federation gate.
+  if ! curl --fail --silent --show-error --output /dev/null --connect-timeout 5 --max-time 15 \
+    --request DELETE --header "authorization: Bearer $registration_token" \
+    "http://localhost:8080$registration_path"; then
+    echo "Isolated ZITADEL DCR cleanup failed: manual client reconciliation required" >&2
+    return 1
+  fi
+  echo "PASS: isolated ZITADEL DCR register and authenticated cleanup (no orphaned test client)"
 }
 
 bootstrap_zitadel() {
