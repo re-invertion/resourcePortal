@@ -69,6 +69,17 @@ async function auditWithStubbedInventory(scenario) {
       if (scenario === "nonzero-without-total") {
         return Response.json({ details: {}, result: [{ id: "app-0" }] });
       }
+      if (scenario === "malformed-management-json") {
+        return new Response('{"secret":"never-disclose-malformed-provider-body"', {
+          status: 200, headers: { "content-type": "application/json" },
+        });
+      }
+      if (scenario === "oversized-management-json") {
+        return new Response(JSON.stringify({ token: "never-disclose-oversized-provider-body",
+          padding: "X".repeat(140000) }), {
+          status: 200, headers: { "content-type": "application/json" },
+        });
+      }
       const firstPage = Array.from({ length: 100 }, (_, i) => ({
         id: "app-" + i, name: i === 0 ? prefix + "candidate" : "unrelated-" + i,
         oidcConfig: { clientId: "client-" + i },
@@ -168,5 +179,21 @@ test("sandbox audit fails closed when nonempty apps omit the total count", async
   const result = await auditWithStubbedInventory("nonzero-without-total");
   assert.equal(result.exitCode, 1);
   assert.match(result.errors, /Missing nonzero management search total/);
+  assert.equal(result.logs, "");
+});
+
+test("sandbox audit sanitizes invalid Management JSON without exposing provider body", async () => {
+  const result = await auditWithStubbedInventory("malformed-management-json");
+  assert.equal(result.exitCode, 1);
+  assert.match(result.errors, /Sandbox Management search response was not valid JSON/);
+  assert.doesNotMatch(result.errors, /never-disclose|secret/);
+  assert.equal(result.logs, "");
+});
+
+test("sandbox audit bounds oversized provider JSON before it is parsed", async () => {
+  const result = await auditWithStubbedInventory("oversized-management-json");
+  assert.equal(result.exitCode, 1);
+  assert.match(result.errors, /Sandbox Management search response exceeded safe size/);
+  assert.doesNotMatch(result.errors, /never-disclose|token/);
   assert.equal(result.logs, "");
 });
