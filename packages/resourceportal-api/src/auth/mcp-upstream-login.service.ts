@@ -1,6 +1,5 @@
 import { Injectable, ServiceUnavailableException, UnauthorizedException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { Prisma } from "@prisma/client";
 import { createHash, randomBytes } from "node:crypto";
 import { OidcAuthService } from "./oidc-auth.service";
 import { OidcIssuerTransport } from "./oidc-issuer-transport";
@@ -58,46 +57,68 @@ export class McpUpstreamLoginService {
     if (!discovery.registrationEndpoint) {
       throw new ServiceUnavailableException("ZITADEL DCR registration is not available");
     }
-    const response = await this.transport().fetch(discovery.registrationEndpoint, "registration", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        client_name: `ResourcePortal MCP identity ${tenantId}`,
-        redirect_uris: [this.callback(origin)],
-        application_type: "web",
-        response_types: ["code"],
-        grant_types: ["authorization_code"],
-        token_endpoint_auth_method: "none",
-      }),
-      signal: AbortSignal.timeout(10_000),
-    });
+    let response: Response;
+    try {
+      response = await this.transport().fetch(discovery.registrationEndpoint, "registration", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          client_name: `ResourcePortal MCP identity ${tenantId}`,
+          redirect_uris: [this.callback(origin)],
+          application_type: "web",
+          response_types: ["code"],
+          grant_types: ["authorization_code"],
+          token_endpoint_auth_method: "none",
+        }),
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch {
+      // The upstream may have persisted a DCR client before its response
+      // failed. Never silently retry the non-idempotent registration POST.
+      throw new ServiceUnavailableException({
+        code: "MCP_IDENTITY_DCR_REGISTRATION_OUTCOME_UNCERTAIN",
+        message: "ZITADEL MCP identity registration may have been accepted; reconcile upstream clients before retrying",
+      });
+    }
     if (response.status !== 201) {
       throw new ServiceUnavailableException("ZITADEL denied MCP identity client registration");
     }
     // A malicious or compromised issuer response must not persist arbitrary
     // clients into the privileged issuer-global exact-client allowlist.
-    const raw = await boundedJson(response);
+    let raw: Record<string, unknown>;
+    try {
+      raw = await boundedJson(response);
+    } catch {
+      throw new ServiceUnavailableException({
+        code: "MCP_IDENTITY_DCR_REGISTRATION_OUTCOME_UNCERTAIN",
+        message: "ZITADEL MCP identity registration returned an unreadable accepted response; reconcile upstream clients before retrying",
+      });
+    }
     const clientId = raw.client_id;
     if (typeof clientId !== "string" || !/^\d{1,64}$/.test(clientId) ||
         !Array.isArray(raw.redirect_uris) ||
         raw.redirect_uris.length !== 1 || raw.redirect_uris[0] !== this.callback(origin) ||
         raw.token_endpoint_auth_method !== "none") {
-      throw new ServiceUnavailableException("ZITADEL MCP identity registration is invalid");
+      throw new ServiceUnavailableException({
+        code: "MCP_IDENTITY_DCR_REGISTRATION_OUTCOME_UNCERTAIN",
+        message: "ZITADEL MCP identity registration returned invalid accepted metadata; reconcile upstream clients before retrying",
+        ...(typeof clientId === "string" && /^\d{1,64}$/.test(clientId) ? { clientId } : {}),
+      });
     }
     try {
       await this.prisma.mcpOAuthUpstreamClient.create({ data: { tenantId, clientId } });
       return clientId;
-    } catch (error) {
-      if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") {
-        throw error;
-      }
-      // Concurrent first connect is only allowed to use the existing DB
-      // record; the losing client's DCR app is *not* authorized by the Action.
-      const winner = await this.prisma.mcpOAuthUpstreamClient.findUnique({
-        where: { tenantId },
+    } catch {
+      // A concurrent registration can win the local unique constraint but
+      // leave THIS accepted ZITADEL DCR application orphaned. Never return
+      // the winning client as if this second registration was fully cleaned.
+      // The newly returned numeric client ID is safe for read-only operator
+      // reconciliation; its registration bearer is never returned or logged.
+      throw new ServiceUnavailableException({
+        code: "MCP_IDENTITY_DCR_PARTIAL_REGISTRATION",
+        message: "ZITADEL MCP identity client was registered but its local binding was not confirmed; reconcile this client before retrying",
+        clientId,
       });
-      if (!winner) throw new ServiceUnavailableException("MCP upstream registration race");
-      return winner.clientId;
     }
   }
 
