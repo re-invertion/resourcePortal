@@ -454,6 +454,16 @@ describe("DCR partial registration compensation (#213)", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("never deletes a different DCR client when the rollback metadata client ID disagrees", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(registration("https://auth.resource-portal.test/oauth/v2/register/another-client"))
+      .mockResolvedValueOnce(new Response("{}", { status: 503 }));
+    await partialRegistrationResponse(fetchMock);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.map((call) => (call[1] as RequestInit).method))
+      .toEqual(["POST", "POST"]);
+  });
+
   it("does not send registration bearer to a rollback URI outside the DCR endpoint", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(registration("https://auth.resource-portal.test/management/v1/projects/_search"))
