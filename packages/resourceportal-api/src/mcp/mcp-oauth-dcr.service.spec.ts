@@ -152,7 +152,7 @@ describe("McpOAuthDcrService", () => {
       "x-zitadel-instance-host": "auth.resource-portal.test",
       "x-zitadel-public-host": "auth.resource-portal.test",
     });
-    expect(managementOptions.headers).not.toHaveProperty("x-zitadel-orgid");
+    expect(managementOptions.headers).toHaveProperty("x-zitadel-orgid", "401000000000000000");
   });
 
   it("converts a newly registered DCR app on the second ZITADEL search page", async () => {
