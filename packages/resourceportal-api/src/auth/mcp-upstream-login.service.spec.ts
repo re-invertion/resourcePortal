@@ -128,6 +128,57 @@ describe("#442 MCP identity-only upstream OAuth PKCE, tenant scope and replay", 
     expect(login.verifierCipher).not.toContain(flow.state);
   });
 
+  it("reports an accepted upstream identity client as partial if the RP binding fails", async () => {
+    const f = fixture();
+    f.prisma.mcpOAuthUpstreamClient.create.mockRejectedValueOnce(new Error("P2002 race: secret DB internals"));
+    let response: unknown;
+    try { await f.svc.start(input, origin); } catch (error) {
+      response = error && typeof error === "object" && "getResponse" in error
+        ? (error as { getResponse: () => unknown }).getResponse() : error;
+    }
+    expect(response).toMatchObject({
+      code: "MCP_IDENTITY_DCR_PARTIAL_REGISTRATION", clientId: upstreamClientId,
+    });
+    expect(JSON.stringify(response)).not.toContain("secret DB internals");
+    expect(f.prisma.mcpOAuthUpstreamLogin.create).not.toHaveBeenCalled();
+    expect(f.transport.mock.calls.filter(([, stage]) => stage === "registration"))
+      .toHaveLength(1);
+  });
+
+  it("classifies accepted identity DCR with malformed metadata as uncertain without binding", async () => {
+    const f = fixture();
+    f.transport.mockImplementationOnce(() => Promise.resolve(new Response(JSON.stringify({
+      client_id: upstreamClientId, redirect_uris: ["https://attacker.invalid/callback"],
+      token_endpoint_auth_method: "none",
+    }), { status: 201 })));
+    let response: unknown;
+    try { await f.svc.start(input, origin); } catch (error) {
+      response = error && typeof error === "object" && "getResponse" in error
+        ? (error as { getResponse: () => unknown }).getResponse() : error;
+    }
+    expect(response).toMatchObject({
+      code: "MCP_IDENTITY_DCR_REGISTRATION_OUTCOME_UNCERTAIN", clientId: upstreamClientId,
+    });
+    expect(f.prisma.mcpOAuthUpstreamClient.create).not.toHaveBeenCalled();
+    expect(f.prisma.mcpOAuthUpstreamLogin.create).not.toHaveBeenCalled();
+  });
+
+  it("classifies dropped identity DCR registration responses as uncertain without automatic retries", async () => {
+    const f = fixture();
+    f.transport.mockRejectedValueOnce(new Error("private issuer transport: Bearer secret-registration-token"));
+    let response: unknown;
+    try { await f.svc.start(input, origin); } catch (error) {
+      response = error && typeof error === "object" && "getResponse" in error
+        ? (error as { getResponse: () => unknown }).getResponse() : error;
+    }
+    expect(response).toMatchObject({ code: "MCP_IDENTITY_DCR_REGISTRATION_OUTCOME_UNCERTAIN" });
+    expect(JSON.stringify(response)).not.toContain("secret-registration-token");
+    expect(f.transport.mock.calls.filter(([, stage]) => stage === "registration"))
+      .toHaveLength(1);
+    expect(f.prisma.mcpOAuthUpstreamClient.create).not.toHaveBeenCalled();
+    expect(f.prisma.mcpOAuthUpstreamLogin.create).not.toHaveBeenCalled();
+  });
+
   it("exchanges once with exact persisted client and refuses replay with another tenant", async () => {
     const f = fixture();
     const { state } = await f.svc.start(input, origin);
