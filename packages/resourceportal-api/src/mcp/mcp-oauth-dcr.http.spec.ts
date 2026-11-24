@@ -26,7 +26,6 @@ async function withUpstream(handler: (req: IncomingMessage, res: ServerResponse)
     ZITADEL_INTERNAL_URL: `http://127.0.0.1:${address.port}`,
     OIDC_ISSUER_URL: "https://auth-synthetic.invalid",
     ZITADEL_MANAGEMENT_TOKEN: "synthetic-management-token",
-    ZITADEL_DCR_DEFAULT_ORGANIZATION_ID: "401000000000000000",
     ZITADEL_DCR_REQUEST_TIMEOUT_MS: "500",
     ZITADEL_DCR_REGISTRATION_TIMEOUT_MS: "3000",
   })[key as "ZITADEL_INTERNAL_URL" | "OIDC_ISSUER_URL" | "ZITADEL_MANAGEMENT_TOKEN" | "ZITADEL_DCR_REQUEST_TIMEOUT_MS" | "ZITADEL_DCR_REGISTRATION_TIMEOUT_MS"] } as unknown as ConfigService;
