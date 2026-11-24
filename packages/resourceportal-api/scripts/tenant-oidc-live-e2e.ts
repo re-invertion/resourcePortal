@@ -80,7 +80,36 @@ async function proveDroppedDcrRegistrationResponse() {
   assert.equal(process.env.GITHUB_ACTIONS, "true");
   const originalFetch = globalThis.fetch;
   let accepted: { clientId: string; registrationToken: string } | undefined;
+  const testName = "RP isolated DCR dropped response " + randomUUID();
+  let ownedAppId: string | undefined;
   let registrationPosts = 0;
+  const readDcrInventory = async () => {
+    const projects = await api<{ result?: Array<{ id: string; name: string }>; details?: { totalResult?: string } }>(
+      "POST", "/management/v1/projects/_search", { query: { limit: 100 },
+        queries: [{ nameQuery: { name: "ZITADEL DCR", method: "TEXT_QUERY_METHOD_EQUALS" } }] });
+    const matches = (projects.result ?? []).filter(project => project.name === "ZITADEL DCR");
+    assert.equal(matches.length, 1, "DCR project missing or ambiguous");
+    assert.equal(Number(projects.details?.totalResult), 1, "DCR project inventory incomplete");
+    type App = { id: string; name?: string; oidcConfig?: { clientId?: string } };
+    const inventory: App[] = [];
+    for (let page = 0; page < 20; page++) {
+      const response = await api<{ result?: App[]; details?: { totalResult?: string } }>(
+        "POST", "/management/v1/projects/" + encodeURIComponent(matches[0].id) + "/apps/_search",
+        { query: { limit: 100, offset: page * 100 } });
+      const rows = response.result ?? [];
+      const total = Number(response.details?.totalResult);
+      assert.ok(Number.isSafeInteger(total) && total >= 0 && rows.length <= 100,
+        "Invalid DCR application inventory");
+      inventory.push(...rows);
+      if (inventory.length === total) {
+        assert.equal(new Set(inventory.map(app => app.id)).size, inventory.length,
+          "Duplicate application in DCR inventory");
+        return inventory;
+      }
+      assert.ok(rows.length === 100 && inventory.length < total, "Incomplete DCR application inventory");
+    }
+    throw new Error("DCR application inventory exceeds test bound");
+  };
   let registrationHttpStatus: number | undefined;
   const registerEndpoint = issuer + "/oauth/v2/register";
   // DCR is only advertised when the isolated issuer explicitly enables it.
@@ -133,7 +162,7 @@ async function proveDroppedDcrRegistrationResponse() {
     let publicResult: unknown;
     try {
       await new McpOAuthDcrService(config).register({
-        client_name: "RP isolated DCR dropped response " + randomUUID(),
+        client_name: testName,
         redirect_uris: ["https://chatgpt.com/connector_platform_oauth_redirect"],
         response_types: ["code"], grant_types: ["authorization_code"],
         token_endpoint_auth_method: "none",
@@ -164,6 +193,13 @@ async function proveDroppedDcrRegistrationResponse() {
   } finally {
     globalThis.fetch = originalFetch;
     if (accepted) {
+      // Capture the independent management identity before deleting it.
+      // Do not infer ownership from a missing or incomplete inventory.
+      const inventory = await readDcrInventory();
+      const owned = inventory.filter(app => app.oidcConfig?.clientId === accepted!.clientId);
+      assert.equal(owned.length, 1, "Exact DCR app not independently observable before cleanup");
+      assert.ok(owned[0].id && owned[0].name?.startsWith(testName + " ("), "DCR app ownership mismatch");
+      ownedAppId = owned[0].id;
       // Only this disposable CI-owned client, identified by its exact
       // returned URI-safe ID, may be deleted using its scoped DCR bearer.
       const authHeader = { authorization: "Bearer " + accepted.registrationToken };
@@ -172,13 +208,33 @@ async function proveDroppedDcrRegistrationResponse() {
         signal: AbortSignal.timeout(15000),
       });
       assert.equal(deleted.status, 204, "Real test DCR client cleanup was not acknowledged");
-      const after = await originalFetch(cleanupUrl(accepted.clientId), {
-        method: "GET", headers: authHeader, redirect: "error",
-        signal: AbortSignal.timeout(15000),
-      });
-      assert.ok(after.status === 401 || after.status === 403 || after.status === 404,
-        "SECURITY: DCR client still accessible after exact-token cleanup");
-      console.log("PASS: exact test-owned ZITADEL orphan DELETE204; independent GET denied after cleanup (#213)");
+      // v4.17.0 RemoveDynamicOIDCClient commits ApplicationRemoved to the
+      // eventstore; RFC7592 GET reads ActiveOIDCClientByID and accepts the
+      // projected token hash without a write-model lookup on a hash match.
+      // A 204 therefore does not establish that the read model has converged.
+      // Require BOTH RFC7592 absence and independent management inventory.
+      const deadline = performance.now() + 15000;
+      let afterStatus = 0;
+      let remainingApps = -1;
+      do {
+        const after = await originalFetch(cleanupUrl(accepted.clientId), {
+          method: "GET", headers: authHeader, redirect: "error",
+          signal: AbortSignal.timeout(Math.max(1, Math.ceil(deadline - performance.now()))),
+        });
+        afterStatus = after.status;
+        await after.body?.cancel();
+        assert.ok([200, 401, 403, 404].includes(afterStatus),
+          "Unexpected RFC7592 cleanup read status: " + afterStatus);
+        const inventory = await readDcrInventory();
+        remainingApps = inventory.filter(app => app.id === ownedAppId ||
+          app.oidcConfig?.clientId === accepted!.clientId ||
+          app.name?.startsWith(testName + " (")).length;
+        if (afterStatus === 404 && remainingApps === 0) break;
+        if (performance.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
+      } while (performance.now() < deadline);
+      assert.equal(afterStatus, 404, "SECURITY: RFC7592 client not absent after bounded cleanup");
+      assert.equal(remainingApps, 0, "SECURITY: DCR application remains in management inventory");
+      console.log("PASS: exact DCR DELETE204, RFC7592 GET404 and independent management inventory absent (#213)");
     }
   }
 }
