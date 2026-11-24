@@ -116,9 +116,13 @@ async function proveDroppedDcrRegistrationResponse() {
         "/management/v1/projects/" + encodeURIComponent(matches[0].id) + "/apps/_search",
         { query: { limit: 100, offset: page * 100 } }, deadline);
       const rows = response.result ?? [];
-      const total = Number(response.details?.totalResult);
+      // Protobuf JSON omits zero-valued scalar fields, including totalResult
+      // on an empty list. Require the ListDetails envelope nevertheless.
+      assert.ok(response.details && Array.isArray(rows), "Missing DCR list details");
+      const total = Number(response.details.totalResult ?? 0);
       assert.ok(Number.isSafeInteger(total) && total >= 0 && rows.length <= 100,
-        "Invalid DCR application inventory");
+        "Invalid DCR application inventory (rows=" + rows.length +
+        ", totalPresent=" + (response.details.totalResult !== undefined) + ")");
       inventory.push(...rows);
       if (inventory.length === total) {
         assert.equal(new Set(inventory.map(app => app.id)).size, inventory.length,
