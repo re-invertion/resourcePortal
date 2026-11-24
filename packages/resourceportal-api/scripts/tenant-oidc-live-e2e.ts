@@ -212,6 +212,7 @@ async function main() {
       issuer, projectId: projectA, foreignProjectId: projectB, clientId: web.clientId,
       clientSecret: web.clientSecret, userId: userAId,
       userName: "oidc-live-" + suffix + "-a", password: "E2e!Test-" + suffix + "-a",
+      assertCodeReplayDenied: true,
     });
     // #498: prove repeated *fresh* confidential Web authorization requests,
     // distinct codes/states and separate successful token exchanges. A 200
