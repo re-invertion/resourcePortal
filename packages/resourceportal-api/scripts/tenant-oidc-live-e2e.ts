@@ -18,6 +18,7 @@ import { startActionProof } from "./tenant-oidc-actions-v2-proof";
 import { McpOAuthDcrService } from "../src/mcp/mcp-oauth-dcr.service";
 import { AppConsumersService } from "../src/app-consumers/app-consumers.service";
 import { AppConsumerActionService } from "../src/app-consumers/app-consumer-action.service";
+import { McpDcrClientVerifierService } from "../src/app-consumers/mcp-dcr-client-verifier.service";
 
 function required(name: string) {
   const value = process.env[name]?.trim();
@@ -358,6 +359,16 @@ async function proveDroppedDcrRegistrationResponse() {
     assert.equal(app.oidcConfig?.accessTokenType, "OIDC_TOKEN_TYPE_JWT",
       "Real DCR client did not persist the JWT access-token setting");
     console.log("PASS: real HTTPS ZITADEL DCR success through RP JWT compatibility, independent JWT management readback (#213)");
+    // #442: the actual production Action verifier must recognize this very
+    // DCR client (with the ChatGPT callback) only after a complete,
+    // unambiguous ZITADEL inventory proof. This is the disposable isolated
+    // issuer, not a live ChatGPT user or a production authorization.
+    const verifier = new McpDcrClientVerifierService(positiveConfig);
+    assert.equal(await verifier.isTrustedChatGptClient(positive.clientId), true,
+      "Real ChatGPT DCR client was rejected by the production trust verifier");
+    assert.equal(await verifier.isTrustedChatGptClient("unregistered-" + randomUUID()), false,
+      "Unregistered ChatGPT OAuth client incorrectly trusted by production verifier");
+    console.log("PASS: real HTTPS ZITADEL ChatGPT DCR trust verifier accepts registered exact client and denies unregistered client (#442)");
   } catch (failure) {
     compatibilityFailure = failure;
   } finally {
