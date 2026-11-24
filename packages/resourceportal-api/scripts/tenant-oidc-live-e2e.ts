@@ -81,6 +81,7 @@ async function proveDroppedDcrRegistrationResponse() {
   const originalFetch = globalThis.fetch;
   let accepted: { clientId: string; registrationToken: string } | undefined;
   let registrationPosts = 0;
+  let registrationHttpStatus: number | undefined;
   const registerEndpoint = issuer + "/oauth/v2/register";
   const cleanupUrl = (clientId: string) => {
     assert.match(clientId, /^[a-zA-Z0-9._~-]{1,128}$/);
@@ -96,6 +97,7 @@ async function proveDroppedDcrRegistrationResponse() {
     // The real HTTPS issuer must COMMIT and return 201 before the harness
     // simulates a network loss; a fake/stubbed upstream does not count.
     const response = await originalFetch(input, init);
+    registrationHttpStatus = response.status;
     assert.equal(response.status, 201, "Isolated HTTPS ZITADEL rejected real DCR registration");
     const metadata = await response.json() as {
       client_id?: unknown; registration_access_token?: unknown;
@@ -130,8 +132,11 @@ async function proveDroppedDcrRegistrationResponse() {
       publicResult = failure && typeof failure === "object" && "getResponse" in failure
         ? (failure as { getResponse: () => unknown }).getResponse() : failure;
     }
-    assert.ok(accepted, "No actual accepted DCR registration was observed");
-    assert.equal(registrationPosts, 1, "An uncertain registration must not retry POST");
+    assert.equal(registrationPosts, 1,
+      "MCP DCR test never sent exactly one real registration POST");
+    assert.equal(registrationHttpStatus, 201,
+      "Actual ZITADEL DCR registration HTTP status (no body/secret logged)");
+    assert.ok(accepted, "Real HTTP201 did not return valid registration metadata");
     assert.equal((publicResult as { code?: string } | undefined)?.code,
       "DCR_REGISTRATION_OUTCOME_UNCERTAIN");
     assert.ok(!JSON.stringify(publicResult).includes(accepted.registrationToken),
