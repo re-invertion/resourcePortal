@@ -133,15 +133,26 @@ export class McpUpstreamLoginService {
     if (input.resource !== `${origin}/api/tenants/${input.tenantId}/mcp`) {
       throw new UnauthorizedException("MCP resource audience mismatch");
     }
+    // Validate all local/public redirect and issuer metadata BEFORE the
+    // non-idempotent upstream DCR registration. Invalid issuer discovery must
+    // not leave a newly accepted, unused ZITADEL client behind.
+    const callbackUri = this.callback(origin);
+    const discovery = await this.oidc.getDiscovery();
+    let authorizationUrl: URL;
+    try {
+      authorizationUrl = new URL(discovery.authorizationEndpoint);
+      const configuredIssuer = new URL(this.config.get<string>("OIDC_ISSUER_URL") ?? "");
+      if (authorizationUrl.protocol !== "https:" ||
+          authorizationUrl.origin !== configuredIssuer.origin ||
+          authorizationUrl.username || authorizationUrl.password || authorizationUrl.hash) {
+        throw new Error("Untrusted issuer metadata");
+      }
+    } catch {
+      throw new ServiceUnavailableException("Untrusted ZITADEL authorization endpoint");
+    }
     const clientId = await this.upstreamClient(input.tenantId, origin);
     const verifier = codeToken();
     const state = codeToken();
-    const discovery = await this.oidc.getDiscovery();
-    const authorizationUrl = new URL(discovery.authorizationEndpoint);
-    if (authorizationUrl.protocol !== "https:" ||
-        authorizationUrl.origin !== new URL(this.config.get<string>("OIDC_ISSUER_URL") ?? "").origin) {
-      throw new ServiceUnavailableException("Untrusted ZITADEL authorization endpoint");
-    }
     await this.prisma.mcpOAuthUpstreamLogin.create({ data: {
       stateHash: hash(state),
       clientId: input.clientId,
@@ -156,7 +167,7 @@ export class McpUpstreamLoginService {
       expiresAt: new Date(Date.now() + 600_000),
     } });
     authorizationUrl.searchParams.set("client_id", clientId);
-    authorizationUrl.searchParams.set("redirect_uri", this.callback(origin));
+    authorizationUrl.searchParams.set("redirect_uri", callbackUri);
     authorizationUrl.searchParams.set("response_type", "code");
     authorizationUrl.searchParams.set("scope", "openid profile email");
     authorizationUrl.searchParams.set("state", state);
