@@ -41,13 +41,21 @@ async function search(path, offset, queries) {
 }
 async function allPages(path, queries) {
   const collected = [];
+  const observedIds = new Set();
   let expectedTotal = null;
   for (let page = 0; page < maxPages; page += 1) {
     const { result, total } = await search(path, page * pageSize, queries);
     if (expectedTotal === null) expectedTotal = total;
     assert.equal(total, expectedTotal, "Inconsistent pagination count; audit is UNKNOWN");
-    collected.push(...result);
-    assert.ok(collected.length <= total, "Duplicated/oversized search results");
+    for (const item of result) {
+      assert.ok(item && typeof item.id === "string" && item.id.length > 0,
+        "Incomplete management identity; audit is UNKNOWN");
+      assert.ok(!observedIds.has(item.id),
+        "Repeated management identity across pages; audit is UNKNOWN");
+      observedIds.add(item.id);
+      collected.push(item);
+    }
+    assert.ok(collected.length <= total, "Oversized search results; audit is UNKNOWN");
     if (collected.length === total) return collected;
     assert.ok(result.length === pageSize, "Incomplete search page; audit is UNKNOWN");
   }
