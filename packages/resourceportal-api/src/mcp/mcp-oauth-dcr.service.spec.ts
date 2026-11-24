@@ -214,10 +214,11 @@ describe("McpOAuthDcrService", () => {
           id: "duplicate-b", oidcConfig: { clientId: "client-1" },
         }],
       })))
-      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response(null, { status: 404 }));
     global.fetch = fetchMock as typeof fetch;
     await expect(service().register({})).rejects.toThrow("DCR application search was ambiguous");
-    expect(fetchMock).toHaveBeenCalledTimes(5);
+    expect(fetchMock).toHaveBeenCalledTimes(6);
     expect(fetchMock.mock.calls[4]?.[0]).toBe(
       "http://zitadel:8080/oauth/v2/register/client-1",
     );
@@ -236,11 +237,12 @@ describe("McpOAuthDcrService", () => {
         details: { totalResult: 2 },
         result: [{ id: "dcr-project", name: "ZITADEL DCR" }],
       })))
-      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response(null, { status: 404 }));
     global.fetch = fetchMock as typeof fetch;
 
     await expect(service().register({})).rejects.toThrow("DCR project search was ambiguous");
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(fetchMock.mock.calls[2]?.[0]).toBe(
       "http://zitadel:8080/oauth/v2/register/client-1",
     );
@@ -317,7 +319,8 @@ describe("McpOAuthDcrService", () => {
       .mockResolvedValueOnce(new Response(
         '{"details":"secret-management-response", malformed', { status: 200 },
       ))
-      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response(null, { status: 404 }));
     global.fetch = fetchMock as typeof fetch;
     let failure: unknown;
     try { await service().register({}); } catch (error) {
@@ -327,7 +330,7 @@ describe("McpOAuthDcrService", () => {
     expect(JSON.stringify(failure)).toContain("ZITADEL DCR management response was invalid");
     expect(JSON.stringify(failure)).not.toContain("secret-management-response");
     expect(JSON.stringify(failure)).not.toContain("sensitive-registration-token");
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(fetchMock).toHaveBeenNthCalledWith(3,
       "http://zitadel:8080/oauth/v2/register/client-1",
       expect.objectContaining({ method: "DELETE" }));
@@ -372,7 +375,8 @@ describe("McpOAuthDcrService", () => {
         ),
       )
       .mockResolvedValueOnce(new Response("{}", { status: 500 }))
-      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response(null, { status: 404 }));
     global.fetch = fetchMock as typeof fetch;
 
     await expect(service().register({}, undefined)).rejects.toThrow(
@@ -551,7 +555,8 @@ describe("DCR partial registration compensation (#213)", () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(registration())
       .mockRejectedValueOnce(new Error("Transport failure: Bearer private-management-secret at http://zitadel:8080"))
-      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response(null, { status: 404 }));
     global.fetch = fetchMock as typeof fetch;
     let failure: unknown;
     try { await service().register({}); } catch (error) {
@@ -561,7 +566,7 @@ describe("DCR partial registration compensation (#213)", () => {
     expect(JSON.stringify(failure)).toContain("ZITADEL DCR upstream request unavailable or timed out");
     expect(JSON.stringify(failure)).not.toContain("private-management-secret");
     expect(JSON.stringify(failure)).not.toContain("http://zitadel:8080");
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(fetchMock.mock.calls[2]?.[0]).toBe("http://zitadel:8080/oauth/v2/register/client-1");
   });
 
@@ -569,9 +574,10 @@ describe("DCR partial registration compensation (#213)", () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(registration())
       .mockResolvedValueOnce(new Response("{}", { status: 503 }))
-      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response(null, { status: 404 }));
     global.fetch = fetchMock as typeof fetch;
     await expect(service().register({})).rejects.toThrow("compatibility update failed with HTTP 503");
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 });
