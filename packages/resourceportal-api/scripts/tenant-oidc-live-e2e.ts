@@ -304,8 +304,12 @@ async function proveDroppedDcrRegistrationResponse() {
     throw new AggregateError([primaryFailure, cleanupFailure],
       "DCR scenario failed and exact-client cleanup could not be verified");
   }
-  if (cleanupFailure !== undefined) throw cleanupFailure;
-  if (primaryFailure !== undefined) throw primaryFailure;
+  if (cleanupFailure !== undefined) {
+    throw cleanupFailure instanceof Error ? cleanupFailure : new Error("DCR cleanup failed");
+  }
+  if (primaryFailure !== undefined) {
+    throw primaryFailure instanceof Error ? primaryFailure : new Error("DCR scenario failed");
+  }
 }
 
 async function main() {
