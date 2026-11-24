@@ -146,6 +146,8 @@ describe("DCR real HTTP fault injection (#213)", () => {
         expect(req.headers.authorization).toBe("Bearer rollback-only-secret");
         clientExists = false;
         res.writeHead(204).end();
+      } else if (req.method === "GET" && req.url === "/oauth/v2/register/synthetic-client") {
+        res.writeHead(404).end();
       } else {
         res.writeHead(500).end('{}');
       }
@@ -156,6 +158,7 @@ describe("DCR real HTTP fault injection (#213)", () => {
       "POST /oauth/v2/register",
       "POST /management/v1/projects/_search",
       "DELETE /oauth/v2/register/synthetic-client",
+      "GET /oauth/v2/register/synthetic-client",
     ]);
   });
 
@@ -176,6 +179,8 @@ describe("DCR real HTTP fault injection (#213)", () => {
       } else if (req.method === "DELETE" && req.url === "/oauth/v2/register/synthetic-client") {
         expect(req.headers.authorization).toBe("Bearer registration-only-secret");
         res.writeHead(204).end();
+      } else if (req.method === "GET" && req.url === "/oauth/v2/register/synthetic-client") {
+        res.writeHead(404).end();
       } else {
         throw new Error(`Unexpected redirected request: ${req.method} ${req.url}`);
       }
@@ -187,6 +192,7 @@ describe("DCR real HTTP fault injection (#213)", () => {
       "POST /oauth/v2/register",
       "POST /management/v1/projects/_search",
       "DELETE /oauth/v2/register/synthetic-client",
+      "GET /oauth/v2/register/synthetic-client",
     ]);
   });
 
@@ -244,6 +250,8 @@ describe("DCR real HTTP fault injection (#213)", () => {
         expect(req.headers.authorization).toBe("Bearer rollback-only-secret");
         clientExists = false;
         res.writeHead(204).end();
+      } else if (req.method === "GET" && req.url === "/oauth/v2/register/management-stall-client") {
+        res.writeHead(404).end();
       } else {
         throw new Error(`Unexpected request: ${req.method} ${req.url}`);
       }
@@ -256,6 +264,7 @@ describe("DCR real HTTP fault injection (#213)", () => {
       "POST /oauth/v2/register",
       "POST /management/v1/projects/_search",
       "DELETE /oauth/v2/register/management-stall-client",
+      "GET /oauth/v2/register/management-stall-client",
     ]);
   });
 
