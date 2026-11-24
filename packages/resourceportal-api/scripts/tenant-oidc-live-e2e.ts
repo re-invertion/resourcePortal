@@ -15,6 +15,7 @@ import { ZitadelTenantProjectService } from "../src/tenant-oidc/zitadel-tenant-p
 import { ZitadelOAuthApplicationService } from "../src/oauth-applications/zitadel-oauth-application.service";
 import { runOidcAuthorizationE2E, assertRevokedRefreshCannotAuthorizeTenant } from "./tenant-oidc-browser-e2e";
 import { startActionProof } from "./tenant-oidc-actions-v2-proof";
+import { McpOAuthDcrService } from "../src/mcp/mcp-oauth-dcr.service";
 import { AppConsumersService } from "../src/app-consumers/app-consumers.service";
 import { AppConsumerActionService } from "../src/app-consumers/app-consumer-action.service";
 
@@ -65,6 +66,104 @@ async function createZitadelHuman(suffix: string): Promise<string> {
   });
   assert.match(answer.userId ?? "", /^\d+$/, "ZITADEL returned no native user subject");
   return answer.userId!;
+}
+
+/**
+ * Isolated real ZITADEL DCR lost-response proof. The harness deliberately
+ * retains registration-scoped credentials for an exact test-only cleanup;
+ * production orphan recovery without those credentials remains unproven.
+ * NEVER send this experiment to a non-local or production issuer.
+ */
+async function proveDroppedDcrRegistrationResponse() {
+  assert.equal(issuer, "https://localhost:8443");
+  assert.equal(process.env.TENANT_OIDC_E2E_ISOLATED, "true");
+  assert.equal(process.env.GITHUB_ACTIONS, "true");
+  const originalFetch = globalThis.fetch;
+  let accepted: { clientId: string; registrationToken: string } | undefined;
+  let registrationPosts = 0;
+  const registerEndpoint = issuer + "/oauth/v2/register";
+  const cleanupUrl = (clientId: string) => {
+    assert.match(clientId, /^[a-zA-Z0-9._~-]{1,128}$/);
+    return issuer + "/oauth/v2/register/" + clientId;
+  };
+  globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
+    const requestedUrl = typeof input === "string" ? input
+      : input instanceof URL ? input.href : input.url;
+    if (requestedUrl !== registerEndpoint || init?.method !== "POST") {
+      return originalFetch(input, init);
+    }
+    registrationPosts += 1;
+    // The real HTTPS issuer must COMMIT and return 201 before the harness
+    // simulates a network loss; a fake/stubbed upstream does not count.
+    const response = await originalFetch(input, init);
+    assert.equal(response.status, 201, "Isolated HTTPS ZITADEL rejected real DCR registration");
+    const metadata = await response.json() as {
+      client_id?: unknown; registration_access_token?: unknown;
+    };
+    assert.equal(typeof metadata.client_id, "string");
+    assert.equal(typeof metadata.registration_access_token, "string");
+    accepted = {
+      clientId: metadata.client_id as string,
+      registrationToken: metadata.registration_access_token as string,
+    };
+    throw new Error("Synthetic transport failure after actual accepted upstream POST201");
+  };
+  try {
+    const config = { get: (key: string) => ({
+      ZITADEL_INTERNAL_URL: issuer,
+      OIDC_ISSUER_URL: issuer,
+      ZITADEL_MANAGEMENT_TOKEN: "unused-for-lost-response-proof",
+      ZITADEL_DCR_REQUEST_TIMEOUT_MS: "10000",
+      ZITADEL_DCR_REGISTRATION_TIMEOUT_MS: "30000",
+    })[key as "ZITADEL_INTERNAL_URL" | "OIDC_ISSUER_URL" |
+        "ZITADEL_MANAGEMENT_TOKEN" | "ZITADEL_DCR_REQUEST_TIMEOUT_MS" |
+        "ZITADEL_DCR_REGISTRATION_TIMEOUT_MS"] } as ConfigService;
+    let publicResult: unknown;
+    try {
+      await new McpOAuthDcrService(config).register({
+        client_name: "RP isolated DCR dropped response " + randomUUID(),
+        redirect_uris: ["https://chatgpt.com/connector_platform_oauth_redirect"],
+        response_types: ["code"], grant_types: ["authorization_code"],
+        token_endpoint_auth_method: "none",
+      });
+    } catch (failure) {
+      publicResult = failure && typeof failure === "object" && "getResponse" in failure
+        ? (failure as { getResponse: () => unknown }).getResponse() : failure;
+    }
+    assert.ok(accepted, "No actual accepted DCR registration was observed");
+    assert.equal(registrationPosts, 1, "An uncertain registration must not retry POST");
+    assert.equal((publicResult as { code?: string } | undefined)?.code,
+      "DCR_REGISTRATION_OUTCOME_UNCERTAIN");
+    assert.ok(!JSON.stringify(publicResult).includes(accepted.registrationToken),
+      "SECURITY: response exposed a registration bearer token");
+    // Confirm the orphan directly through ZITADEL's actual RFC7592 API.
+    const authHeader = { authorization: "Bearer " + accepted.registrationToken };
+    const before = await originalFetch(cleanupUrl(accepted.clientId), {
+      method: "GET", headers: authHeader, redirect: "error",
+      signal: AbortSignal.timeout(15000),
+    });
+    assert.equal(before.status, 200, "Real DCR orphan not independently observable");
+    console.log("PASS: real HTTPS ZITADEL POST201 then simulated lost response => RP uncertain, one POST, read-only orphan GET200 (#213)");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (accepted) {
+      // Only this disposable CI-owned client, identified by its exact
+      // returned URI-safe ID, may be deleted using its scoped DCR bearer.
+      const authHeader = { authorization: "Bearer " + accepted.registrationToken };
+      const deleted = await originalFetch(cleanupUrl(accepted.clientId), {
+        method: "DELETE", headers: authHeader, redirect: "error",
+        signal: AbortSignal.timeout(15000),
+      });
+      assert.equal(deleted.status, 204, "Real test DCR client cleanup was not acknowledged");
+      const after = await originalFetch(cleanupUrl(accepted.clientId), {
+        method: "GET", headers: authHeader, redirect: "error",
+        signal: AbortSignal.timeout(15000),
+      });
+      assert.ok(after.status === 401 || after.status === 403 || after.status === 404,
+        "SECURITY: DCR client still accessible after exact-token cleanup");
+      console.log("PASS: exact test-owned ZITADEL orphan DELETE204; independent GET denied after cleanup (#213)");
+    }
+  }
 }
 
 async function main() {
@@ -696,6 +795,7 @@ async function main() {
       "GET", "/management/v1/users/" + userBId + "/grants/" + rowB.zitadelGrantId,
     );
     assert.equal(stillB.userGrant.projectId, projectB, "Tenant A revocation harmed Tenant B");
+    await proveDroppedDcrRegistrationResponse();
     console.log("PASS: real HTTPS issuer/discovery/JWKS, two independent projects and client types,");
     console.log("  membership-backed grants, cross-tenant denial and live grant revocation.");
     console.log("PENDING: production migration certification, RP Web/CLI live refresh and MFA/recovery,");
