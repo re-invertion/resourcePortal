@@ -309,6 +309,36 @@ describe("#442 MCP identity-only upstream OAuth PKCE, tenant scope and replay", 
     expect(f.logins.size).toBe(0);
   });
 
+  it("does not consume OAuth state on foreign or invalid callback origins", async () => {
+    const f = fixture();
+    const { state } = await f.svc.start(input, origin);
+    f.transport.mockClear();
+    await expect(f.svc.exchange("fresh-code", state, "https://attacker.example.test"))
+      .rejects.toThrow("MCP identity client or resource mismatch");
+    await expect(f.svc.exchange("fresh-code", state, "http://rp.example.test"))
+      .rejects.toThrow("Canonical public RP origin is required");
+    expect(f.transport).not.toHaveBeenCalled();
+    expect(f.logins.size).toBe(1);
+    await expect(f.svc.exchange("fresh-code", state, origin))
+      .resolves.toMatchObject({ idToken: "signed-issuer-jwt" });
+    expect(f.logins.size).toBe(0);
+  });
+
+  it("does not consume OAuth state after upstream identity-client binding changes", async () => {
+    const f = fixture();
+    const { state } = await f.svc.start(input, origin);
+    f.transport.mockClear();
+    f.prisma.mcpOAuthUpstreamClient.findUnique.mockResolvedValueOnce({
+      tenantId: tenant, clientId: "340396026519785526",
+    });
+    await expect(f.svc.exchange("fresh-code", state, origin))
+      .rejects.toThrow("MCP identity client or resource mismatch");
+    expect(f.transport).not.toHaveBeenCalled();
+    expect(f.logins.size).toBe(1);
+    await expect(f.svc.exchange("fresh-code", state, origin))
+      .resolves.toMatchObject({ idToken: "signed-issuer-jwt" });
+  });
+
   it("classifies missing upstream authorization requests without exposing OAuth secrets", async () => {
     const f = fixture();
     const { state } = await f.svc.start(input, origin);
