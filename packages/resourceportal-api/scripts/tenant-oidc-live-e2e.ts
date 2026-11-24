@@ -83,18 +83,37 @@ async function proveDroppedDcrRegistrationResponse() {
   const testName = "RP isolated DCR dropped response " + randomUUID();
   let ownedAppId: string | undefined;
   let registrationPosts = 0;
+  // Anonymous RFC7591 registrations belong to the instance default org,
+  // not necessarily the separate RP bootstrap organization.
+  const defaultOrg = await api<{ org?: { id?: string } }>("GET", "/admin/v1/orgs/default");
+  const dcrOrgId = defaultOrg.org?.id;
+  assert.ok(dcrOrgId && /^\d+$/.test(dcrOrgId), "Missing default DCR organization ID");
+  console.log("DCR inventory organization matches RP bootstrap: " + (dcrOrgId === orgId));
+  const dcrApi = async <T>(route: string, body: unknown, deadline: number): Promise<T> => {
+    const remaining = Math.ceil(deadline - performance.now());
+    assert.ok(remaining > 0, "DCR inventory deadline exceeded");
+    const response = await originalFetch(issuer + route, {
+      method: "POST", redirect: "error",
+      headers: { authorization: "Bearer " + token, "content-type": "application/json",
+        "x-zitadel-orgid": dcrOrgId },
+      body: JSON.stringify(body), signal: AbortSignal.timeout(remaining),
+    });
+    assert.equal(response.status, 200, "DCR management inventory HTTP failure");
+    return response.json() as Promise<T>;
+  };
   const readDcrInventory = async (deadline: number) => {
-    const projects = await api<{ result?: Array<{ id: string; name: string }>; details?: { totalResult?: string } }>(
-      "POST", "/management/v1/projects/_search", { query: { limit: 100 },
+    const projects = await dcrApi<{ result?: Array<{ id: string; name: string }>; details?: { totalResult?: string } }>(
+      "/management/v1/projects/_search", { query: { limit: 100 },
         queries: [{ nameQuery: { name: "ZITADEL DCR", method: "TEXT_QUERY_METHOD_EQUALS" } }] }, deadline);
     const matches = (projects.result ?? []).filter(project => project.name === "ZITADEL DCR");
+    if (matches.length === 0 && Number(projects.details?.totalResult ?? 0) === 0) return null;
     assert.equal(matches.length, 1, "DCR project missing or ambiguous");
     assert.equal(Number(projects.details?.totalResult), 1, "DCR project inventory incomplete");
     type App = { id: string; name?: string; oidcConfig?: { clientId?: string } };
     const inventory: App[] = [];
     for (let page = 0; page < 20; page++) {
-      const response = await api<{ result?: App[]; details?: { totalResult?: string } }>(
-        "POST", "/management/v1/projects/" + encodeURIComponent(matches[0].id) + "/apps/_search",
+      const response = await dcrApi<{ result?: App[]; details?: { totalResult?: string } }>(
+        "/management/v1/projects/" + encodeURIComponent(matches[0].id) + "/apps/_search",
         { query: { limit: 100, offset: page * 100 } }, deadline);
       const rows = response.result ?? [];
       const total = Number(response.details?.totalResult);
@@ -195,7 +214,14 @@ async function proveDroppedDcrRegistrationResponse() {
     if (accepted) {
       // Capture the independent management identity before deleting it.
       // Do not infer ownership from a missing or incomplete inventory.
-      const inventory = await readDcrInventory(performance.now() + 15000);
+      const inventoryDeadline = performance.now() + 15000;
+      let inventory = await readDcrInventory(inventoryDeadline);
+      while ((!inventory || !inventory.some(app => app.oidcConfig?.clientId === accepted!.clientId)) &&
+          performance.now() < inventoryDeadline) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        inventory = await readDcrInventory(inventoryDeadline);
+      }
+      assert.ok(inventory, "Default organization DCR project not visible");
       const owned = inventory.filter(app => app.oidcConfig?.clientId === accepted!.clientId);
       assert.equal(owned.length, 1, "Exact DCR app not independently observable before cleanup");
       assert.ok(owned[0].id && owned[0].name?.startsWith(testName + " ("), "DCR app ownership mismatch");
@@ -226,6 +252,7 @@ async function proveDroppedDcrRegistrationResponse() {
         assert.ok([200, 401, 403, 404].includes(afterStatus),
           "Unexpected RFC7592 cleanup read status: " + afterStatus);
         const inventory = await readDcrInventory(deadline);
+        assert.ok(inventory, "DCR project disappeared during cleanup verification");
         remainingApps = inventory.filter(app => app.id === ownedAppId ||
           app.oidcConfig?.clientId === accepted!.clientId ||
           app.name?.startsWith(testName + " (")).length;
