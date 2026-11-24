@@ -197,6 +197,8 @@ export class McpOAuthDcrService {
     const pageSize = 100;
     const maxPages = 20;
     for (let attempt = 0; attempt < 50; attempt += 1) {
+      let match: NonNullable<AppSearchResponse["result"]>[number] | undefined;
+      let complete = false;
       for (let page = 0; page < maxPages; page += 1) {
         const offset = page * pageSize;
         const apps = await this.managementRequest<AppSearchResponse>(
@@ -206,34 +208,39 @@ export class McpOAuthDcrService {
           {},
           deadline,
         );
-        // A newly registered application may not yet be projected. Protobuf
-        // JSON omits an empty result array, so retry an absent list as empty.
+        // DCR client IDs are supposed to be unique, but do not trust a
+        // single page: validate the entire bounded project search before
+        // modifying any upstream application.
         const results = apps.result ?? [];
         if (!Array.isArray(results) || results.length > pageSize) {
           throw new BadGatewayException("ZITADEL DCR application search returned invalid page");
         }
-        const matches = results.filter((candidate) => candidate.oidcConfig?.clientId === clientId);
-        if (matches.length > 1) {
-          throw new BadGatewayException("ZITADEL DCR application search was ambiguous");
+        for (const candidate of results) {
+          if (candidate.oidcConfig?.clientId !== clientId) continue;
+          if (!candidate.id || match) {
+            throw new BadGatewayException("ZITADEL DCR application search was ambiguous");
+          }
+          match = candidate;
         }
-        const app = matches[0];
-        if (app?.id) return app as typeof app & { id: string };
-        // The projection can briefly advertise the total before returning
-        // its rows. Retry an empty page instead of deleting a valid client.
+        // The projection can advertise a total before its records exist.
+        // Retry an empty page instead of accepting a partial snapshot.
         if (results.length === 0) break;
         const rawTotal = apps.details?.totalResult;
         const parsed = Number(rawTotal);
         const total = rawTotal !== undefined && Number.isSafeInteger(parsed) && parsed >= 0
           ? parsed : null;
         if (results.length < pageSize || (total !== null && offset + results.length >= total)) {
-          // An underfull page with more results advertised is not a trustworthy
-          // complete scan: fail closed and let the registration rollback.
           if (total !== null && offset + results.length < total) {
             throw new BadGatewayException("ZITADEL DCR application search was incomplete");
           }
+          complete = true;
           break;
         }
       }
+      if (!complete && match) {
+        throw new BadGatewayException("ZITADEL DCR application search was incomplete");
+      }
+      if (match?.id && complete) return match as typeof match & { id: string };
       await sleep(100);
     }
     throw new BadGatewayException("ZITADEL DCR application was not visible after registration");
