@@ -26,19 +26,25 @@ export class McpDcrClientVerifierService {
     };
     const deadline = Date.now() + 6_000;
     const query = async (path: string, body: object) => {
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) return null;
-      const response = await fetch(`${base}${path}`, {
-        signal: AbortSignal.timeout(Math.min(4_000, remaining)),
-        method: "POST", headers, body: JSON.stringify(body),
-      });
-      if (!response.ok) return null;
-      // Bound bytes during streaming rather than buffering a maliciously large
-      // response before checking its length. Never log credentials or payload.
-      const text = await readBoundedBody(response, 512_000);
-      if (text === null) return null;
-      const parsed: unknown = JSON.parse(text);
-      return isRecord(parsed) ? parsed : null;
+      try {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) return null;
+        const response = await fetch(`${base}${path}`, {
+          signal: AbortSignal.timeout(Math.min(4_000, remaining)),
+          method: "POST", redirect: "error", headers, body: JSON.stringify(body),
+        });
+        if (!response.ok) return null;
+        // The Management API bearer must never be redirected to an arbitrary
+        // endpoint. Bounds include bytes read after the response headers.
+        const text = await readBoundedBody(response, 512_000);
+        if (text === null) return null;
+        const parsed: unknown = JSON.parse(text);
+        return isRecord(parsed) ? parsed : null;
+      } catch {
+        // A timeout, connection reset, invalid JSON or redirect is an unknown
+        // identity proof; never permit issuance from a partial observation.
+        return null;
+      }
     };
 
     // Search the DCR project by exact name. Do not mistake a partial or
@@ -50,13 +56,15 @@ export class McpDcrClientVerifierService {
       }],
     });
     const projectList = projects?.result;
-    if (!Array.isArray(projectList)) return false;
-    const matchingProjects = (projectList as unknown[]).filter((entry) =>
-      isRecord(entry) && entry.name === "ZITADEL DCR" && typeof entry.id === "string");
-    const projectCount = matchingProjects.length;
     const projectTotal = readTotalResult(projects?.details);
-    if (projectCount !== 1 || (projectTotal !== null && projectTotal !== 1)) return false;
-    const project = matchingProjects[0];
+    // Never trust a first-page match if ListDetails is missing or announces
+    // additional projects beyond that page. Real positive results include
+    // totalResult; protobuf omits zero, which is a denial here.
+    if (projectTotal !== 1 || !Array.isArray(projectList) || projectList.length !== 1) {
+      return false;
+    }
+    const project = projectList[0];
+    if (!isRecord(project) || project.name !== "ZITADEL DCR") return false;
     if (!isRecord(project) || typeof project.id !== "string") return false;
 
     // ZITADEL's Management ListApps API defaults to 100 results. A client
@@ -65,29 +73,45 @@ export class McpDcrClientVerifierService {
     const pageSize = 100;
     const maxPages = 20;
     const path = `/management/v1/projects/${encodeURIComponent(project.id)}/apps/_search`;
+    const seenAppIds = new Set<string>();
+    let candidate: Record<string, unknown> | undefined;
+    let expectedTotal: number | undefined;
     for (let page = 0; page < maxPages; page += 1) {
       const offset = page * pageSize;
       const applications = await query(path, { query: { limit: pageSize, offset } });
-      const appList = applications?.result;
-      if (!Array.isArray(appList) || appList.length > pageSize) return false;
-      const matches = (appList as unknown[]).filter((entry) =>
-        isRecord(entry) && isRecord(entry.oidcConfig) &&
-        entry.oidcConfig.clientId === clientId);
-      if (matches.length > 1) return false;
-      if (matches.length === 1) {
-        const app = matches[0];
-        if (!isRecord(app) || !isRecord(app.oidcConfig)) return false;
-        const redirects = app.oidcConfig.redirectUris;
-        // Do not accept mixed redirect sets: another callback would allow
-        // redirecting the code to an untrusted party despite the trusted entry.
-        return Array.isArray(redirects) && redirects.length > 0 &&
-          redirects.every(isChatGptOAuthRedirect);
-      }
       const total = readTotalResult(applications?.details);
-      if (appList.length === 0 ||
-          (total !== null && (offset + appList.length >= total ||
-            appList.length < pageSize)) ||
-          (total === null && appList.length < pageSize)) return false;
+      const appList = applications?.result;
+      // Permit protobuf to omit an empty repeated array only with an actual
+      // ListDetails envelope, but that cannot establish a trusted client.
+      if (total === null || total > pageSize * maxPages ||
+          (expectedTotal !== undefined && total !== expectedTotal) ||
+          !Array.isArray(appList) || appList.length > pageSize ||
+          appList.length !== Math.min(pageSize, Math.max(0, total - offset))) {
+        return false;
+      }
+      expectedTotal = total;
+      for (const entry of appList) {
+        if (!isRecord(entry) || typeof entry.id !== "string" ||
+            entry.id.length === 0 || seenAppIds.has(entry.id)) {
+          return false;
+        }
+        seenAppIds.add(entry.id);
+        if (!isRecord(entry.oidcConfig) || entry.oidcConfig.clientId !== clientId) {
+          continue;
+        }
+        // A duplicate client_id anywhere in the complete bounded inventory
+        // means the registered OAuth identity is ambiguous. Never accept the
+        // first match before the remaining pages have been validated.
+        if (candidate) return false;
+        candidate = entry;
+      }
+      if (offset + appList.length !== total) continue;
+      if (!candidate || !isRecord(candidate.oidcConfig)) return false;
+      const redirects = candidate.oidcConfig.redirectUris;
+      // Do not accept mixed redirect sets: another callback would allow
+      // redirecting the code to an untrusted party despite the trusted entry.
+      return Array.isArray(redirects) && redirects.length > 0 &&
+        redirects.every(isChatGptOAuthRedirect);
     }
     return false;
   }
