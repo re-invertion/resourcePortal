@@ -192,6 +192,39 @@ describe("McpOAuthDcrService", () => {
     );
   });
 
+  it("never modifies one DCR app when another page repeats the same OAuth client ID", async () => {
+    const first = Array.from({ length: 100 }, (_, index) => ({
+      id: `other-${index}`,
+      oidcConfig: { clientId: `unrelated-${index}` },
+    }));
+    first[0] = { id: "duplicate-a", oidcConfig: { clientId: "client-1" } };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        client_id: "client-1", registration_access_token: "sensitive-token",
+        registration_client_uri: "https://auth.resource-portal.test/oauth/v2/register/client-1",
+      }), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        result: [{ id: "dcr-project", name: "ZITADEL DCR" }],
+      })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        details: { totalResult: 101 }, result: first,
+      })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        details: { totalResult: 101 }, result: [{
+          id: "duplicate-b", oidcConfig: { clientId: "client-1" },
+        }],
+      })))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    global.fetch = fetchMock as typeof fetch;
+    await expect(service().register({})).rejects.toThrow("DCR application search was ambiguous");
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+    expect(fetchMock.mock.calls[4]?.[0]).toBe(
+      "http://zitadel:8080/oauth/v2/register/client-1",
+    );
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("UpdateApplication")))
+      .toBe(false);
+  });
+
   it("fails closed and rolls back when ZITADEL lists ambiguous DCR projects", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({
