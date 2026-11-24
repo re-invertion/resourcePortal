@@ -270,6 +270,28 @@ describe("#442 MCP identity-only upstream OAuth PKCE, tenant scope and replay", 
     }, origin)).rejects.toThrow("MCP resource audience mismatch");
   });
 
+  it.each([
+    "https://evil.example.test/oauth/v2/token",
+    "http://zitadel.example.test/oauth/v2/token",
+    "https://zitadel.example.test/admin/privileged",
+    "https://zitadel.example.test/oauth/v2/token?leak=true",
+    "https://client:password@zitadel.example.test/oauth/v2/token",
+    "invalid-token-url",
+  ])("rejects untrusted token endpoint without consuming pending state (%s)", async (endpoint) => {
+    const f = fixture();
+    const { state } = await f.svc.start(input, origin);
+    f.transport.mockClear();
+    f.oidc.getDiscovery.mockResolvedValueOnce({ ...discovery, tokenEndpoint: endpoint });
+    await expect(f.svc.exchange("one-time-authorization-code", state, origin))
+      .rejects.toThrow("Untrusted ZITADEL token endpoint");
+    expect(f.transport).not.toHaveBeenCalled();
+    expect(f.logins.size).toBe(1);
+    // Corrected discovery can resume with the original, still-unused state.
+    await expect(f.svc.exchange("one-time-authorization-code", state, origin))
+      .resolves.toMatchObject({ idToken: "signed-issuer-jwt" });
+    expect(f.logins.size).toBe(0);
+  });
+
   it("classifies missing upstream authorization requests without exposing OAuth secrets", async () => {
     const f = fixture();
     const { state } = await f.svc.start(input, origin);
