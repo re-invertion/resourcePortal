@@ -58,14 +58,22 @@ async function search(path, offset, queries) {
   });
   if (!response.ok) throw Error("Sandbox management search failed with HTTP " + response.status);
   const body = await response.json();
-  assert.ok(body && typeof body === "object" && Array.isArray(body.result),
+  assert.ok(body && typeof body === "object" && !Array.isArray(body) &&
+    body.details && typeof body.details === "object" &&
+    (body.result === undefined || Array.isArray(body.result)),
     "Invalid project/app search response");
-  const total = Number(body.details?.totalResult);
-  assert.ok(body.details?.totalResult !== undefined &&
-    Number.isSafeInteger(total) && total >= 0 && total <= pageSize * maxPages,
+  // Protobuf JSON omits default-valued repeated fields and scalar zero
+  // totals. Treat an absent count as zero ONLY with an explicit ListDetails
+  // envelope and an empty row set; fail closed if any row is present.
+  const result = body.result ?? [];
+  const rawTotal = body.details.totalResult;
+  assert.ok(rawTotal !== undefined || result.length === 0,
+    "Missing nonzero management search total; audit is UNKNOWN");
+  const total = Number(rawTotal ?? 0);
+  assert.ok(Number.isSafeInteger(total) && total >= 0 && total <= pageSize * maxPages,
     "Missing, invalid or oversized management search total");
-  assert.ok(body.result.length <= pageSize, "Oversized management search page");
-  return { result: body.result, total };
+  assert.ok(result.length <= pageSize, "Oversized management search page");
+  return { result, total };
 }
 async function allPages(path, queries) {
   const collected = [];
