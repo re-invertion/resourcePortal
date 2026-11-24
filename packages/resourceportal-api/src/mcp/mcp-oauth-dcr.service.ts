@@ -179,7 +179,7 @@ export class McpOAuthDcrService {
     // Never derive an organization from a client-supplied claim or URI.
     const configured = this.config.get<string>("ZITADEL_DCR_DEFAULT_ORGANIZATION_ID")?.trim();
     if (configured) {
-      if (!/^\\d+$/.test(configured)) {
+      if (!/^\d+$/.test(configured)) {
         throw new ServiceUnavailableException("Invalid ZITADEL DCR default organization ID");
       }
       return configured;
@@ -208,7 +208,7 @@ export class McpOAuthDcrService {
     const id = owner && typeof owner === "object" && "org" in owner &&
       owner.org && typeof owner.org === "object" && "id" in owner.org
       ? owner.org.id : undefined;
-    if (typeof id !== "string" || !/^\\d+$/.test(id)) {
+    if (typeof id !== "string" || !/^\d+$/.test(id)) {
       throw new BadGatewayException("ZITADEL DCR default organization ID missing");
     }
     return id;
