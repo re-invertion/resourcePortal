@@ -11,7 +11,6 @@ function service() {
         ZITADEL_INTERNAL_URL: "http://zitadel:8080",
         OIDC_ISSUER_URL: "https://auth.resource-portal.test",
         ZITADEL_MANAGEMENT_TOKEN: "management-token",
-        ZITADEL_DCR_DEFAULT_ORGANIZATION_ID: "401000000000000000",
       })[key],
     ),
   } as unknown as ConfigService);
@@ -152,7 +151,7 @@ describe("McpOAuthDcrService", () => {
       "x-zitadel-instance-host": "auth.resource-portal.test",
       "x-zitadel-public-host": "auth.resource-portal.test",
     });
-    expect(managementOptions.headers).toHaveProperty("x-zitadel-orgid", "401000000000000000");
+    expect(managementOptions.headers).not.toHaveProperty("x-zitadel-orgid");
   });
 
   it("converts a newly registered DCR app on the second ZITADEL search page", async () => {
