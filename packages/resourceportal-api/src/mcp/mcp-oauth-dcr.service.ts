@@ -72,7 +72,10 @@ export class McpOAuthDcrService {
       // response body is truncated, oversized or unreadable. Without the
       // registration ID/rollback credential, deletion cannot be verified.
       if (response.status === 201) throw this.uncertainRegistration();
-      throw error;
+      if (error instanceof BadGatewayException) throw error;
+      // A non-201 upstream response may also stall after headers. Do not
+      // expose an unhandled AbortError or an upstream response body to callers.
+      throw new BadGatewayException("ZITADEL DCR upstream response unavailable or timed out");
     }
     const contentType = response.headers.get("content-type") ?? "application/json";
 
