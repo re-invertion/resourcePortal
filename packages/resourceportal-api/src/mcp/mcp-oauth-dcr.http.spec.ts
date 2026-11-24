@@ -44,6 +44,28 @@ describe("DCR real HTTP fault injection (#213)", () => {
     expect(requests).toBe(1);
   });
 
+  it("bounds a real HTTP 201 response body that stalls after the headers", async () => {
+    let accepted = 0;
+    const service = await withUpstream((req, res) => {
+      expect(req.url).toBe("/oauth/v2/register");
+      accepted += 1;
+      res.writeHead(201, { "content-type": "application/json", "transfer-encoding": "chunked" });
+      res.write('{"client_id":"unrecoverable-');
+      // Deliberately never end the response: upstream registration could
+      // already have committed, so the client cannot assume safe retry.
+    });
+    const start = Date.now();
+    let publicError: unknown;
+    try { await service.register({ client_name: "synthetic-chunked-stall" }); }
+    catch (error) {
+      publicError = error && typeof error === "object" && "getResponse" in error
+        ? (error as { getResponse: () => unknown }).getResponse() : error;
+    }
+    expect(publicError).toMatchObject({ code: "DCR_REGISTRATION_OUTCOME_UNCERTAIN" });
+    expect(Date.now() - start).toBeLessThan(2600);
+    expect(accepted).toBe(1);
+  });
+
   it("rejects a real registration HTTP redirect without forwarding caller authorization", async () => {
     const calls: string[] = [];
     const service = await withUpstream((req, res) => {
