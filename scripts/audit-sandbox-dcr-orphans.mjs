@@ -13,6 +13,30 @@ if (!token || token.includes("\n") || token.includes("\r")) {
 const pageSize = 100;
 const maxPages = 20;
 let verifiedDefaultOrgId;
+// Never buffer arbitrary provider bodies or print a raw JSON parse error,
+// which may contain snippets from an upstream response. The fetch AbortSignal
+// bounds time; this reader also independently bounds actual transferred bytes.
+async function readBoundedJson(response, label) {
+  const reader = response.body?.getReader();
+  if (!reader) throw Error(label + " response has no body");
+  let bytes = 0;
+  const parts = [];
+  try {
+    while (true) {
+      let next;
+      try { next = await reader.read(); }
+      catch { throw Error(label + " response body unavailable"); }
+      if (next.done) break;
+      bytes += next.value.byteLength;
+      if (bytes > 131072) throw Error(label + " response exceeded safe size");
+      parts.push(Buffer.from(next.value));
+    }
+    try { return JSON.parse(Buffer.concat(parts).toString("utf8")); }
+    catch { throw Error(label + " response was not valid JSON"); }
+  } finally {
+    void reader.cancel().catch(() => undefined);
+  }
+}
 // Anonymous RFC7591 clients are owned by ZITADEL's *instance default org*,
 // which may be different from the management token's organization. Without
 // the authoritative scope an empty inventory is not credible orphan evidence.
@@ -29,11 +53,7 @@ async function defaultDcrOrgId() {
   if (response.status !== 200) {
     throw Error("Cannot verify sandbox default DCR organization: HTTP " + response.status);
   }
-  const text = await response.text();
-  assert.ok(text.length <= 65536, "Oversized default-organization response");
-  let body;
-  try { body = JSON.parse(text); }
-  catch { throw Error("Invalid default-organization response"); }
+  const body = await readBoundedJson(response, "Sandbox default organization");
   const id = body?.org?.id;
   assert.ok(typeof id === "string" && /^\d+$/.test(id),
     "Missing numeric sandbox default-organization ID");
@@ -57,7 +77,7 @@ async function search(path, offset, queries) {
     }),
   });
   if (!response.ok) throw Error("Sandbox management search failed with HTTP " + response.status);
-  const body = await response.json();
+  const body = await readBoundedJson(response, "Sandbox Management search");
   assert.ok(body && typeof body === "object" && !Array.isArray(body) &&
     body.details && typeof body.details === "object" &&
     (body.result === undefined || Array.isArray(body.result)),
@@ -102,7 +122,7 @@ try {
     method: "GET", redirect: "error", signal: AbortSignal.timeout(10000),
   });
   assert.equal(discovery.status, 200);
-  const metadata = await discovery.json();
+  const metadata = await readBoundedJson(discovery, "Sandbox OIDC discovery");
   assert.equal(metadata.issuer, issuer, "Wrong sandbox issuer");
   assert.equal(metadata.registration_endpoint, issuer + "/oauth/v2/register",
     "Unexpected DCR endpoint");
