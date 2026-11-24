@@ -145,6 +145,45 @@ describe("#442 MCP identity-only upstream OAuth PKCE, tenant scope and replay", 
       .toHaveLength(1);
   });
 
+  it("never reports two successful identity logins when concurrent DCR registration leaves one client orphaned", async () => {
+    const f = fixture();
+    const differentClient = "340396026519785525";
+    const created: string[] = [];
+    f.prisma.mcpOAuthUpstreamClient.create.mockImplementation((args: {
+      data: { tenantId: string; clientId: string };
+    }) => {
+      if (created.length) return Promise.reject(new Error("P2002 unique client binding"));
+      created.push(args.data.clientId);
+      return Promise.resolve(args.data);
+    });
+    let issued = 0;
+    f.transport.mockImplementation((_, stage) => {
+      expect(stage).toBe("registration");
+      const registrationId = issued++ === 0 ? upstreamClientId : differentClient;
+      return Promise.resolve(new Response(JSON.stringify({
+        client_id: registrationId,
+        redirect_uris: [`${origin}/api/mcp/oauth/upstream/callback`],
+        token_endpoint_auth_method: "none",
+      }), { status: 201 }));
+    });
+    const results = await Promise.allSettled([
+      f.svc.start(input, origin), f.svc.start(input, origin),
+    ]);
+    const successes = results.filter((r): r is PromiseFulfilledResult<Awaited<ReturnType<typeof f.svc.start>>> =>
+      r.status === "fulfilled");
+    const failures = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+    expect(successes).toHaveLength(1);
+    expect(failures).toHaveLength(1);
+    expect(issued).toBe(2);
+    expect(created).toEqual([upstreamClientId]);
+    const publicError = (failures[0].reason as { getResponse: () => unknown }).getResponse();
+    expect(publicError).toMatchObject({
+      code: "MCP_IDENTITY_DCR_PARTIAL_REGISTRATION", clientId: differentClient,
+    });
+    expect(f.logins.size).toBe(1);
+    expect(f.prisma.mcpOAuthUpstreamClient.create).toHaveBeenCalledTimes(2);
+  });
+
   it("classifies accepted identity DCR with malformed metadata as uncertain without binding", async () => {
     const f = fixture();
     f.transport.mockImplementationOnce(() => Promise.resolve(new Response(JSON.stringify({
