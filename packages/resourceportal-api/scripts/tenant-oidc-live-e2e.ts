@@ -205,14 +205,35 @@ async function proveDroppedDcrRegistrationResponse() {
       "DCR_REGISTRATION_OUTCOME_UNCERTAIN");
     assert.ok(!JSON.stringify(publicResult).includes(accepted.registrationToken),
       "SECURITY: response exposed a registration bearer token");
-    // Confirm the orphan directly through ZITADEL's actual RFC7592 API.
+    // RFC7592 GET is served from ActiveOIDCClientByID (a read projection),
+    // while the accepted registration committed its write to the eventstore.
+    // Do not assume projection latency is the cause of an initial 404: record
+    // status-only evidence and require actual GET200 within a fixed deadline.
+    // 401/403/5xx are not temporary "not yet visible" observations.
     const authHeader = { authorization: "Bearer " + accepted.registrationToken };
-    const before = await originalFetch(cleanupUrl(accepted.clientId), {
-      method: "GET", headers: authHeader, redirect: "error",
-      signal: AbortSignal.timeout(15000),
-    });
-    assert.equal(before.status, 200, "Real DCR orphan not independently observable");
-    console.log("PASS: real HTTPS ZITADEL POST201 then simulated lost response => RP uncertain, one POST, read-only orphan GET200 (#213)");
+    const visibleDeadline = performance.now() + 15000;
+    let beforeStatus = 0;
+    let observationCount = 0;
+    do {
+      const remaining = Math.ceil(visibleDeadline - performance.now());
+      assert.ok(remaining > 0, "Real DCR orphan visibility deadline exceeded");
+      const before = await originalFetch(cleanupUrl(accepted.clientId), {
+        method: "GET", headers: authHeader, redirect: "error",
+        signal: AbortSignal.timeout(remaining),
+      });
+      beforeStatus = before.status;
+      observationCount++;
+      await before.body?.cancel();
+      assert.ok(beforeStatus === 200 || beforeStatus === 404,
+        "Real DCR orphan visibility returned unexpected HTTP " + beforeStatus);
+      if (beforeStatus === 200) break;
+      if (performance.now() >= visibleDeadline) break;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    } while (performance.now() < visibleDeadline);
+    assert.equal(beforeStatus, 200,
+      "Real DCR orphan not independently observable (HTTP " + beforeStatus +
+      ", observations=" + observationCount + ")");
+    console.log("PASS: real HTTPS ZITADEL POST201 then simulated lost response => RP uncertain, one POST, read-only orphan GET200 (#213); observations=" + observationCount);
   } finally {
     globalThis.fetch = originalFetch;
     if (accepted) {
