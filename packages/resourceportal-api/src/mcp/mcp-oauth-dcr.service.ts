@@ -92,7 +92,7 @@ export class McpOAuthDcrService {
       throw this.uncertainRegistration();
     }
     try {
-      await this.forceJwtAccessToken(registration.client_id, deadline);
+      await this.forceJwtAccessToken(registration.client_id, deadline, authorization);
     } catch (error) {
       try {
         await this.rollbackRegistration(registration);
@@ -139,9 +139,16 @@ export class McpOAuthDcrService {
     return registration as DcrRegistrationResponse & { client_id: string };
   }
 
-  private async forceJwtAccessToken(clientId: string, deadline: number) {
-    const projectId = await this.findDcrProjectId(deadline);
-    const app = await this.findDcrApp(projectId, clientId, deadline);
+  private async forceJwtAccessToken(clientId: string, deadline: number, authorization?: string) {
+    // ZITADEL v4.17.0 creates anonymous DCR clients in the *instance
+    // default organization*, not the org attached to RP's Management PAT.
+    // Searching the PAT's org can silently select an unrelated DCR project.
+    // For token-authorized DCR, leave the org implicit rather than guessing
+    // the access token's resource owner.
+    const ownerOrg = authorization ? undefined : await this.defaultDcrOrganization(deadline);
+    const headers = ownerOrg ? { "x-zitadel-orgid": ownerOrg } : {};
+    const projectId = await this.findDcrProjectId(deadline, headers);
+    const app = await this.findDcrApp(projectId, clientId, deadline, headers);
     const responseTypes = app.oidcConfig?.responseTypes;
     const grantTypes = app.oidcConfig?.grantTypes;
     if (!responseTypes?.length || !grantTypes?.length) {
@@ -161,12 +168,53 @@ export class McpOAuthDcrService {
           accessTokenType: "OIDC_TOKEN_TYPE_JWT",
         },
       },
-      { "connect-protocol-version": "1" },
+      { "connect-protocol-version": "1", ...headers },
       deadline,
     );
   }
 
-  private async findDcrProjectId(deadline: number) {
+  private async defaultDcrOrganization(deadline: number): Promise<string> {
+    // Optional explicit scope is limited to a numeric ZITADEL org ID.
+    // The usual path reads the authoritative default org from the instance.
+    // Never derive an organization from a client-supplied claim or URI.
+    const configured = this.config.get<string>("ZITADEL_DCR_DEFAULT_ORGANIZATION_ID")?.trim();
+    if (configured) {
+      if (!/^\\d+$/.test(configured)) {
+        throw new ServiceUnavailableException("Invalid ZITADEL DCR default organization ID");
+      }
+      return configured;
+    }
+    const response = await this.upstreamFetch(`${this.internalUrl()}/admin/v1/orgs/default`, {
+      method: "GET",
+      redirect: "error",
+      signal: AbortSignal.timeout(this.requestTimeoutMs(deadline)),
+      headers: {
+        authorization: `Bearer ${this.managementToken()}`,
+        "x-zitadel-instance-host": this.issuerHost(),
+        "x-zitadel-public-host": this.issuerHost(),
+      },
+    });
+    if (response.status !== 200) {
+      throw new BadGatewayException(
+        `ZITADEL DCR default organization lookup failed with HTTP ${response.status}`,
+      );
+    }
+    let owner: unknown;
+    try {
+      owner = JSON.parse(await boundedDcrResponseText(response)) as unknown;
+    } catch {
+      throw new BadGatewayException("ZITADEL DCR default organization response invalid");
+    }
+    const id = owner && typeof owner === "object" && "org" in owner &&
+      owner.org && typeof owner.org === "object" && "id" in owner.org
+      ? owner.org.id : undefined;
+    if (typeof id !== "string" || !/^\\d+$/.test(id)) {
+      throw new BadGatewayException("ZITADEL DCR default organization ID missing");
+    }
+    return id;
+  }
+
+  private async findDcrProjectId(deadline: number, headers: Record<string, string>) {
     for (let attempt = 0; attempt < 50; attempt += 1) {
       const projects = await this.managementRequest<ProjectSearchResponse>(
         "POST",
@@ -177,7 +225,7 @@ export class McpOAuthDcrService {
             name: "ZITADEL DCR", method: "TEXT_QUERY_METHOD_EQUALS",
           } }],
         },
-        {},
+        headers,
         deadline,
       );
       const matches = (projects.result ?? []).filter((candidate) =>
@@ -194,7 +242,9 @@ export class McpOAuthDcrService {
     throw new BadGatewayException("ZITADEL DCR project was not visible after registration");
   }
 
-  private async findDcrApp(projectId: string, clientId: string, deadline: number) {
+  private async findDcrApp(
+    projectId: string, clientId: string, deadline: number, headers: Record<string, string>,
+  ) {
     // ListApps defaults to 100 results. Polling only the first page retries
     // the wrong set forever as more DCR clients accumulate. Page through the
     // bounded result set while honoring the existing registration deadline.
@@ -209,7 +259,7 @@ export class McpOAuthDcrService {
           "POST",
           `/management/v1/projects/${encodeURIComponent(projectId)}/apps/_search`,
           { query: { limit: pageSize, offset } },
-          {},
+          headers,
           deadline,
         );
         // DCR client IDs are supposed to be unique, but do not trust a
