@@ -580,4 +580,45 @@ describe("DCR partial registration compensation (#213)", () => {
     await expect(service().register({})).rejects.toThrow("compatibility update failed with HTTP 503");
     expect(fetchMock).toHaveBeenCalledTimes(4);
   });
+  it("waits for projected client removal after an acknowledged DELETE204", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(registration())
+      .mockResolvedValueOnce(new Response("{}", { status: 503 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response("{}", { status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { status: 404 }));
+    global.fetch = fetchMock as typeof fetch;
+    await expect(service().register({})).rejects.toThrow("compatibility update failed with HTTP 503");
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+    for (const index of [3, 4]) {
+      expect(fetchMock.mock.calls[index]?.[0]).toBe("http://zitadel:8080/oauth/v2/register/client-1");
+      const options = fetchMock.mock.calls[index]?.[1] as RequestInit;
+      expect(options.method).toBe("GET");
+      expect(options.redirect).toBe("error");
+      expect((options.headers as Record<string, string>).authorization).toBe("Bearer sensitive-registration-token");
+      expect(options.signal).toBeInstanceOf(AbortSignal);
+    }
+  });
+
+  it("never treats a denied scoped registration bearer as proof of client deletion", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(registration())
+      .mockResolvedValueOnce(new Response("{}", { status: 503 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response(null, { status: 403 }));
+    await partialRegistrationResponse(fetchMock);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect((fetchMock.mock.calls[3]?.[1] as RequestInit).method).toBe("GET");
+  });
+
+  it("never treats an unavailable read projection as proof of client deletion", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(registration())
+      .mockResolvedValueOnce(new Response("{}", { status: 503 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response(null, { status: 503 }));
+    await partialRegistrationResponse(fetchMock);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
 });
