@@ -103,7 +103,7 @@ function fixture() {
     prisma as unknown as PrismaService, config as unknown as ConfigService,
     oidc as unknown as OidcAuthService, encryption as unknown as EncryptionService,
   );
-  return { svc, prisma, encryption, transport, logins };
+  return { svc, prisma, encryption, transport, logins, oidc };
 }
 
 afterEach(() => vi.restoreAllMocks());
@@ -126,6 +126,25 @@ describe("#442 MCP identity-only upstream OAuth PKCE, tenant scope and replay", 
     expect(login.clientState).toBe(input.clientState);
     expect(login.verifierCipher).toMatch(/^sealed-/);
     expect(login.verifierCipher).not.toContain(flow.state);
+  });
+
+  it.each([
+    "https://attacker.invalid/oauth/v2/authorize",
+    "http://zitadel.example.test/oauth/v2/authorize",
+    "https://admin:secret@zitadel.example.test/oauth/v2/authorize",
+    "not-a-url",
+  ])("rejects untrusted authorization metadata before non-idempotent identity DCR (%s)", async (endpoint) => {
+    const f = fixture();
+    f.prisma.mcpOAuthUpstreamClient.findUnique.mockResolvedValue(null);
+    const current = { ...discovery, authorizationEndpoint: endpoint };
+    // No successful registration POST or RP pending consent is permitted.
+    f.prisma.mcpOAuthUpstreamClient.create.mockClear();
+    f.oidc.getDiscovery.mockResolvedValue(current);
+    await expect(f.svc.start(input, origin))
+      .rejects.toThrow("Untrusted ZITADEL authorization endpoint");
+    expect(f.transport).not.toHaveBeenCalled();
+    expect(f.prisma.mcpOAuthUpstreamClient.create).not.toHaveBeenCalled();
+    expect(f.prisma.mcpOAuthUpstreamLogin.create).not.toHaveBeenCalled();
   });
 
   it("reports an accepted upstream identity client as partial if the RP binding fails", async () => {
