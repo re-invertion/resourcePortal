@@ -172,6 +172,8 @@ async function proveDroppedDcrRegistrationResponse() {
     };
     throw new Error("Synthetic transport failure after actual accepted upstream POST201");
   };
+  let primaryFailure: unknown;
+  let cleanupFailure: unknown;
   try {
     const config = { get: (key: string) => ({
       ZITADEL_INTERNAL_URL: issuer,
@@ -234,9 +236,12 @@ async function proveDroppedDcrRegistrationResponse() {
       "Real DCR orphan not independently observable (HTTP " + beforeStatus +
       ", observations=" + observationCount + ")");
     console.log("PASS: real HTTPS ZITADEL POST201 then simulated lost response => RP uncertain, one POST, read-only orphan GET200 (#213); observations=" + observationCount);
+  } catch (failure) {
+    primaryFailure = failure;
   } finally {
     globalThis.fetch = originalFetch;
     if (accepted) {
+      try {
       // Capture the independent management identity before deleting it.
       // Do not infer ownership from a missing or incomplete inventory.
       const inventoryDeadline = performance.now() + 15000;
@@ -287,8 +292,20 @@ async function proveDroppedDcrRegistrationResponse() {
       assert.equal(afterStatus, 404, "SECURITY: RFC7592 client not absent after bounded cleanup");
       assert.equal(remainingApps, 0, "SECURITY: DCR application remains in management inventory");
       console.log("PASS: exact DCR DELETE204, RFC7592 GET404 and independent management inventory absent (#213)");
+      } catch (failure) {
+        cleanupFailure = failure;
+      }
     }
   }
+  // An unsuccessful proof must not be replaced by a secondary cleanup
+  // exception. Conversely, a failed exact-client cleanup must never be
+  // discarded just because an earlier assertion also failed.
+  if (primaryFailure !== undefined && cleanupFailure !== undefined) {
+    throw new AggregateError([primaryFailure, cleanupFailure],
+      "DCR scenario failed and exact-client cleanup could not be verified");
+  }
+  if (cleanupFailure !== undefined) throw cleanupFailure;
+  if (primaryFailure !== undefined) throw primaryFailure;
 }
 
 async function main() {
