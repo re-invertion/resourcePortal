@@ -220,6 +220,9 @@ export class McpUpstreamLoginService {
         typeof state !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(state)) {
       throw new UnauthorizedException("Invalid MCP identity OAuth callback");
     }
+    // Do not allow an invalid callback origin to burn a valid one-time login.
+    // The canonical public origin is verified before any state mutation.
+    this.callback(origin);
     const record = await this.prisma.mcpOAuthUpstreamLogin.findUnique({
       where: { stateHash: hash(state) },
     });
@@ -231,18 +234,21 @@ export class McpUpstreamLoginService {
     // nor permanently invalidate a legitimate pending callback.
     const discovery = await this.oidc.getDiscovery();
     this.assertTrustedTokenEndpoint(discovery.tokenEndpoint);
-    const consumed = await this.prisma.mcpOAuthUpstreamLogin.deleteMany({
-      where: { stateHash: record.stateHash, expiresAt: { gt: new Date() } },
-    });
-    if (consumed.count !== 1) {
-      throw new UnauthorizedException("MCP identity OAuth state was already used");
-    }
+    // Validate the tenant, current bound identity client and exact resource
+    // audience BEFORE consuming the pending state. Unauthorized callbacks
+    // must not DoS a legitimate user's ongoing authentication transaction.
     const upstreamClient = await this.prisma.mcpOAuthUpstreamClient.findUnique({
       where: { tenantId: record.tenantId },
     });
     if (!upstreamClient || upstreamClient.clientId !== record.upstreamClientId ||
         record.resource !== `${origin}/api/tenants/${record.tenantId}/mcp`) {
       throw new UnauthorizedException("MCP identity client or resource mismatch");
+    }
+    const consumed = await this.prisma.mcpOAuthUpstreamLogin.deleteMany({
+      where: { stateHash: record.stateHash, expiresAt: { gt: new Date() } },
+    });
+    if (consumed.count !== 1) {
+      throw new UnauthorizedException("MCP identity OAuth state was already used");
     }
     const response = await this.transport().fetch(discovery.tokenEndpoint, "code-exchange", {
       method: "POST",
