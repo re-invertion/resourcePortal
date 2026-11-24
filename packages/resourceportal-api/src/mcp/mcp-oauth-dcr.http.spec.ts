@@ -202,6 +202,81 @@ describe("DCR real HTTP fault injection (#213)", () => {
     ]);
   });
 
+  it("bounds a stalled real management request after HTTP 201 and confirms DELETE cleanup", async () => {
+    const calls: string[] = [];
+    let clientExists = false;
+    const service = await withUpstream((req, res) => {
+      calls.push(`${req.method} ${req.url}`);
+      if (req.method === "POST" && req.url === "/oauth/v2/register") {
+        clientExists = true;
+        res.writeHead(201, { "content-type": "application/json" }).end(JSON.stringify({
+          client_id: "management-stall-client",
+          registration_access_token: "rollback-only-secret",
+          registration_client_uri: "https://auth-synthetic.invalid/oauth/v2/register/management-stall-client",
+        }));
+      } else if (req.method === "POST" && req.url === "/management/v1/projects/_search") {
+        expect(req.headers.authorization).toBe("Bearer synthetic-management-token");
+        res.writeHead(200, { "content-type": "application/json", "transfer-encoding": "chunked" });
+        res.write('{"result":'); // never finish management response
+      } else if (req.method === "DELETE" && req.url === "/oauth/v2/register/management-stall-client") {
+        expect(req.headers.authorization).toBe("Bearer rollback-only-secret");
+        clientExists = false;
+        res.writeHead(204).end();
+      } else {
+        throw new Error(`Unexpected request: ${req.method} ${req.url}`);
+      }
+    });
+    const start = Date.now();
+    await expect(service.register({})).rejects.toThrow("ZITADEL DCR upstream response unavailable or timed out");
+    expect(Date.now() - start).toBeLessThan(2600);
+    expect(clientExists).toBe(false);
+    expect(calls).toEqual([
+      "POST /oauth/v2/register",
+      "POST /management/v1/projects/_search",
+      "DELETE /oauth/v2/register/management-stall-client",
+    ]);
+  });
+
+  it("classifies a real rollback DELETE stall as partial, never a confirmed cleanup", async () => {
+    let clientExists = false;
+    const calls: string[] = [];
+    const service = await withUpstream((req, res) => {
+      calls.push(`${req.method} ${req.url}`);
+      if (req.method === "POST" && req.url === "/oauth/v2/register") {
+        clientExists = true;
+        res.writeHead(201, { "content-type": "application/json" }).end(JSON.stringify({
+          client_id: "stalled-rollback-client",
+          registration_access_token: "rollback-only-secret",
+          registration_client_uri: "https://auth-synthetic.invalid/oauth/v2/register/stalled-rollback-client",
+        }));
+      } else if (req.method === "POST" && req.url === "/management/v1/projects/_search") {
+        res.writeHead(503).end('{}');
+      } else if (req.method === "DELETE" && req.url === "/oauth/v2/register/stalled-rollback-client") {
+        expect(req.headers.authorization).toBe("Bearer rollback-only-secret");
+        // Do not send even response headers; a successful HTTP status would
+        // count as confirmation of deletion, regardless of a stalled body.
+        // This simulates an issuer that never acknowledges DELETE at all.
+      } else {
+        throw new Error(`Unexpected request: ${req.method} ${req.url}`);
+      }
+    });
+    const start = Date.now();
+    let publicError: unknown;
+    try { await service.register({}); } catch (error) {
+      publicError = error && typeof error === "object" && "getResponse" in error
+        ? (error as { getResponse: () => unknown }).getResponse() : error;
+    }
+    expect(publicError).toMatchObject({ code: "DCR_PARTIAL_REGISTRATION", clientId: "stalled-rollback-client" });
+    expect(JSON.stringify(publicError)).not.toContain("rollback-only-secret");
+    expect(Date.now() - start).toBeLessThan(2600);
+    expect(clientExists).toBe(true);
+    expect(calls).toEqual([
+      "POST /oauth/v2/register",
+      "POST /management/v1/projects/_search",
+      "DELETE /oauth/v2/register/stalled-rollback-client",
+    ]);
+  });
+
   it("classifies the actual HTTP 201 + management 503 + rollback DELETE 503 orphan", async () => {
     const methods: string[] = [];
     let upstreamClientExists = false;
