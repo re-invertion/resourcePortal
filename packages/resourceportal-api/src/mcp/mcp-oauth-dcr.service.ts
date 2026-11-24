@@ -259,7 +259,15 @@ export class McpOAuthDcrService {
       },
       body: JSON.stringify(body),
     });
-    const text = await boundedDcrResponseText(response);
+    let text: string;
+    try {
+      text = await boundedDcrResponseText(response);
+    } catch (error) {
+      // A stalled/truncated management stream may abort only after fetch()
+      // has already returned headers. Never leak raw upstream diagnostics.
+      if (error instanceof BadGatewayException) throw error;
+      throw new BadGatewayException("ZITADEL DCR upstream response unavailable or timed out");
+    }
     if (!response.ok) {
       throw new BadGatewayException(
         `ZITADEL DCR compatibility update failed with HTTP ${response.status}`,
