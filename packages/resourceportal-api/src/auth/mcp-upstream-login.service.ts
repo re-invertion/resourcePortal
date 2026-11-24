@@ -207,6 +207,23 @@ export class McpUpstreamLoginService {
     if (!record || record.expiresAt.getTime() <= Date.now()) {
       throw new UnauthorizedException("Expired MCP identity OAuth state");
     }
+    // Check untrusted discovery metadata BEFORE consuming the one-time login
+    // state. A malformed token endpoint must neither receive a valid code
+    // nor permanently invalidate a legitimate pending callback.
+    const discovery = await this.oidc.getDiscovery();
+    try {
+      const tokenEndpoint = new URL(discovery.tokenEndpoint);
+      const issuer = new URL(this.config.get<string>("OIDC_ISSUER_URL") ?? "");
+      if (tokenEndpoint.protocol !== "https:" ||
+          tokenEndpoint.origin !== issuer.origin ||
+          tokenEndpoint.pathname !== "/oauth/v2/token" ||
+          tokenEndpoint.search || tokenEndpoint.hash ||
+          tokenEndpoint.username || tokenEndpoint.password) {
+        throw new Error("Untrusted OIDC token metadata");
+      }
+    } catch {
+      throw new ServiceUnavailableException("Untrusted ZITADEL token endpoint");
+    }
     const consumed = await this.prisma.mcpOAuthUpstreamLogin.deleteMany({
       where: { stateHash: record.stateHash, expiresAt: { gt: new Date() } },
     });
@@ -220,7 +237,6 @@ export class McpUpstreamLoginService {
         record.resource !== `${origin}/api/tenants/${record.tenantId}/mcp`) {
       throw new UnauthorizedException("MCP identity client or resource mismatch");
     }
-    const discovery = await this.oidc.getDiscovery();
     const response = await this.transport().fetch(discovery.tokenEndpoint, "code-exchange", {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
