@@ -47,6 +47,22 @@ export class McpUpstreamLoginService {
     return `${origin}/api/mcp/oauth/upstream/callback`;
   }
 
+  private assertTrustedTokenEndpoint(value: string): void {
+    try {
+      const tokenEndpoint = new URL(value);
+      const issuer = new URL(this.config.get<string>("OIDC_ISSUER_URL") ?? "");
+      if (tokenEndpoint.protocol !== "https:" ||
+          tokenEndpoint.origin !== issuer.origin ||
+          tokenEndpoint.pathname !== "/oauth/v2/token" ||
+          tokenEndpoint.search || tokenEndpoint.hash ||
+          tokenEndpoint.username || tokenEndpoint.password) {
+        throw new Error("Untrusted OIDC token metadata");
+      }
+    } catch {
+      throw new ServiceUnavailableException("Untrusted ZITADEL token endpoint");
+    }
+  }
+
   private async upstreamClient(tenantId: string, origin: string) {
     const existing = await this.prisma.mcpOAuthUpstreamClient.findUnique({
       where: { tenantId },
@@ -168,6 +184,9 @@ export class McpUpstreamLoginService {
     } catch {
       throw new ServiceUnavailableException("Untrusted ZITADEL authorization endpoint");
     }
+    // A DCR client must never be created for an issuer whose OAuth code
+    // exchange endpoint is invalid. Validate BEFORE non-idempotent POST.
+    this.assertTrustedTokenEndpoint(discovery.tokenEndpoint);
     const clientId = await this.upstreamClient(input.tenantId, origin);
     const verifier = codeToken();
     const state = codeToken();
@@ -211,19 +230,7 @@ export class McpUpstreamLoginService {
     // state. A malformed token endpoint must neither receive a valid code
     // nor permanently invalidate a legitimate pending callback.
     const discovery = await this.oidc.getDiscovery();
-    try {
-      const tokenEndpoint = new URL(discovery.tokenEndpoint);
-      const issuer = new URL(this.config.get<string>("OIDC_ISSUER_URL") ?? "");
-      if (tokenEndpoint.protocol !== "https:" ||
-          tokenEndpoint.origin !== issuer.origin ||
-          tokenEndpoint.pathname !== "/oauth/v2/token" ||
-          tokenEndpoint.search || tokenEndpoint.hash ||
-          tokenEndpoint.username || tokenEndpoint.password) {
-        throw new Error("Untrusted OIDC token metadata");
-      }
-    } catch {
-      throw new ServiceUnavailableException("Untrusted ZITADEL token endpoint");
-    }
+    this.assertTrustedTokenEndpoint(discovery.tokenEndpoint);
     const consumed = await this.prisma.mcpOAuthUpstreamLogin.deleteMany({
       where: { stateHash: record.stateHash, expiresAt: { gt: new Date() } },
     });
