@@ -27,6 +27,7 @@ jobs:
         run: |
           node <<'NODE'
           const assert = require('node:assert/strict');
+          (async () => {
           const issuer = process.env.EXPECTED_ISSUER;
           assert.equal(issuer, 'https://auth-sandbox.resource-portal.pl');
           const response = await fetch(issuer + '/.well-known/openid-configuration', {
@@ -42,4 +43,8 @@ jobs:
             'Sandbox does not advertise exact OAuth DCR registration endpoint');
           console.log('PASS: existing SANDBOX advertises exact DCR endpoint (read-only GET).');
           console.log('NOT CERTIFIED: no POST201, lost response, orphan lookup, DELETE or real CI issuer settings tested.');
+          })().catch(error => {
+            console.error('Sandbox DCR read-only check failed:', error.message);
+            process.exitCode = 1;
+          });
           NODE
