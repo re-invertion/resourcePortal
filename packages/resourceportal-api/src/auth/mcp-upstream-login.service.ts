@@ -57,6 +57,9 @@ export class McpUpstreamLoginService {
     if (!discovery.registrationEndpoint) {
       throw new ServiceUnavailableException("ZITADEL DCR registration is not available");
     }
+    // Canonical RP origin validation happens before attempting the POST;
+    // local configuration failures are not uncertain upstream mutations.
+    const callbackUri = this.callback(origin);
     let response: Response;
     try {
       response = await this.transport().fetch(discovery.registrationEndpoint, "registration", {
@@ -64,7 +67,7 @@ export class McpUpstreamLoginService {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           client_name: `ResourcePortal MCP identity ${tenantId}`,
-          redirect_uris: [this.callback(origin)],
+          redirect_uris: [callbackUri],
           application_type: "web",
           response_types: ["code"],
           grant_types: ["authorization_code"],
@@ -97,7 +100,7 @@ export class McpUpstreamLoginService {
     const clientId = raw.client_id;
     if (typeof clientId !== "string" || !/^\d{1,64}$/.test(clientId) ||
         !Array.isArray(raw.redirect_uris) ||
-        raw.redirect_uris.length !== 1 || raw.redirect_uris[0] !== this.callback(origin) ||
+        raw.redirect_uris.length !== 1 || raw.redirect_uris[0] !== callbackUri ||
         raw.token_endpoint_auth_method !== "none") {
       throw new ServiceUnavailableException({
         code: "MCP_IDENTITY_DCR_REGISTRATION_OUTCOME_UNCERTAIN",
