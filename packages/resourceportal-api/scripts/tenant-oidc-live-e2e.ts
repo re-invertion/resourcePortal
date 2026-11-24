@@ -35,7 +35,7 @@ if (issuer !== "https://localhost:8443" ||
 }
 const token = required("ZITADEL_MANAGEMENT_TOKEN");
 const orgId = required("ZITADEL_ORGANIZATION_ID");
-const api = async <T>(method: string, route: string, body?: unknown): Promise<T> => {
+const api = async <T>(method: string, route: string, body?: unknown, deadline?: number): Promise<T> => {
   const response = await fetch(issuer + route, {
     method,
     headers: {
@@ -44,7 +44,7 @@ const api = async <T>(method: string, route: string, body?: unknown): Promise<T>
       "x-zitadel-orgid": orgId,
     },
     body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(20000),
+    signal: AbortSignal.timeout(deadline === undefined ? 20000 : Math.max(1, Math.min(20000, Math.ceil(deadline - performance.now())))),
   });
   if (!response.ok) throw new Error("Isolated ZITADEL " + route + " returned HTTP " + response.status);
   return response.json() as Promise<T>;
@@ -83,10 +83,10 @@ async function proveDroppedDcrRegistrationResponse() {
   const testName = "RP isolated DCR dropped response " + randomUUID();
   let ownedAppId: string | undefined;
   let registrationPosts = 0;
-  const readDcrInventory = async () => {
+  const readDcrInventory = async (deadline: number) => {
     const projects = await api<{ result?: Array<{ id: string; name: string }>; details?: { totalResult?: string } }>(
       "POST", "/management/v1/projects/_search", { query: { limit: 100 },
-        queries: [{ nameQuery: { name: "ZITADEL DCR", method: "TEXT_QUERY_METHOD_EQUALS" } }] });
+        queries: [{ nameQuery: { name: "ZITADEL DCR", method: "TEXT_QUERY_METHOD_EQUALS" } }] }, deadline);
     const matches = (projects.result ?? []).filter(project => project.name === "ZITADEL DCR");
     assert.equal(matches.length, 1, "DCR project missing or ambiguous");
     assert.equal(Number(projects.details?.totalResult), 1, "DCR project inventory incomplete");
@@ -95,7 +95,7 @@ async function proveDroppedDcrRegistrationResponse() {
     for (let page = 0; page < 20; page++) {
       const response = await api<{ result?: App[]; details?: { totalResult?: string } }>(
         "POST", "/management/v1/projects/" + encodeURIComponent(matches[0].id) + "/apps/_search",
-        { query: { limit: 100, offset: page * 100 } });
+        { query: { limit: 100, offset: page * 100 } }, deadline);
       const rows = response.result ?? [];
       const total = Number(response.details?.totalResult);
       assert.ok(Number.isSafeInteger(total) && total >= 0 && rows.length <= 100,
@@ -195,7 +195,7 @@ async function proveDroppedDcrRegistrationResponse() {
     if (accepted) {
       // Capture the independent management identity before deleting it.
       // Do not infer ownership from a missing or incomplete inventory.
-      const inventory = await readDcrInventory();
+      const inventory = await readDcrInventory(performance.now() + 15000);
       const owned = inventory.filter(app => app.oidcConfig?.clientId === accepted!.clientId);
       assert.equal(owned.length, 1, "Exact DCR app not independently observable before cleanup");
       assert.ok(owned[0].id && owned[0].name?.startsWith(testName + " ("), "DCR app ownership mismatch");
@@ -225,7 +225,7 @@ async function proveDroppedDcrRegistrationResponse() {
         await after.body?.cancel();
         assert.ok([200, 401, 403, 404].includes(afterStatus),
           "Unexpected RFC7592 cleanup read status: " + afterStatus);
-        const inventory = await readDcrInventory();
+        const inventory = await readDcrInventory(deadline);
         remainingApps = inventory.filter(app => app.id === ownedAppId ||
           app.oidcConfig?.clientId === accepted!.clientId ||
           app.name?.startsWith(testName + " (")).length;
