@@ -166,6 +166,23 @@ describe("#442 MCP identity-only upstream OAuth PKCE, tenant scope and replay", 
     expect(f.prisma.mcpOAuthUpstreamLogin.create).not.toHaveBeenCalled();
   });
 
+  it.each([
+    "https://evil.example.test/oauth/v2/token",
+    "http://zitadel.example.test/oauth/v2/token",
+    "https://zitadel.example.test/admin/privileged",
+    "https://zitadel.example.test/oauth/v2/token?leak=true",
+    "https://client:password@zitadel.example.test/oauth/v2/token",
+    "invalid-token-url",
+  ])("rejects unsafe token metadata before identity DCR registration (%s)", async (endpoint) => {
+    const f = fixture();
+    f.oidc.getDiscovery.mockResolvedValue({ ...discovery, tokenEndpoint: endpoint });
+    await expect(f.svc.start(input, origin))
+      .rejects.toThrow("Untrusted ZITADEL token endpoint");
+    expect(f.transport).not.toHaveBeenCalled();
+    expect(f.prisma.mcpOAuthUpstreamClient.create).not.toHaveBeenCalled();
+    expect(f.prisma.mcpOAuthUpstreamLogin.create).not.toHaveBeenCalled();
+  });
+
   it("reports an accepted upstream identity client as partial if the RP binding fails", async () => {
     const f = fixture();
     f.prisma.mcpOAuthUpstreamClient.create.mockRejectedValueOnce(new Error("P2002 race: secret DB internals"));
