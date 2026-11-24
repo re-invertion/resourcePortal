@@ -53,6 +53,37 @@ done
   echo "Real HTTPS ZITADEL issuer did not become ready" >&2
   exit 1
 }
+# Required DCR capability check on the isolated, pinned issuer. This is a
+# READ-ONLY preflight: no security-policy mutation, client registration or
+# success-by-skipping is permitted. Fail early with a clear prerequisite.
+node <<'NODE'
+const assert = require('node:assert/strict');
+(async () => {
+  const issuer = 'https://localhost:8443';
+  assert.equal(process.env.TENANT_OIDC_E2E_ISOLATED, 'true');
+  assert.equal(process.env.GITHUB_ACTIONS, 'true');
+  const response = await fetch(issuer + '/.well-known/openid-configuration', {
+    method: 'GET',
+    redirect: 'error',
+    signal: AbortSignal.timeout(15000),
+    headers: { accept: 'application/json' },
+  });
+  assert.equal(response.status, 200, 'Isolated ZITADEL discovery must return HTTP 200');
+  const discovery = await response.json();
+  assert.equal(discovery.issuer, issuer, 'Isolated ZITADEL issuer mismatch');
+  if (discovery.registration_endpoint !== issuer + '/oauth/v2/register') {
+    console.error('BLOCKED: isolated ZITADEL v4.17 does not advertise its exact OAuth DCR endpoint.');
+    console.error('Prerequisite: an authorized operator must enable DCR on the disposable test issuer.');
+    console.error('This test will not modify issuer policy, skip the real DCR gate or use sandbox as a substitute.');
+    process.exitCode = 1;
+    return;
+  }
+  console.log('PASS: isolated HTTPS issuer advertises its exact OAuth DCR endpoint.');
+})().catch(error => {
+  console.error('BLOCKED: isolated HTTPS DCR preflight failed:', error.message);
+  process.exitCode = 1;
+});
+NODE
 cat >.env <<EOF
 NODE_ENV=test
 DATABASE_URL=postgresql://resource_portal:resource_portal@localhost:55432/resource_portal?schema=public
