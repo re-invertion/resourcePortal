@@ -109,7 +109,7 @@ async function proveDroppedDcrRegistrationResponse() {
     if (matches.length === 0 && Number(projects.details?.totalResult ?? 0) === 0) return null;
     assert.equal(matches.length, 1, "DCR project missing or ambiguous");
     assert.equal(Number(projects.details?.totalResult), 1, "DCR project inventory incomplete");
-    type App = { id: string; name?: string; oidcConfig?: { clientId?: string } };
+    type App = { id: string; name?: string; oidcConfig?: { clientId?: string; accessTokenType?: string } };
     const inventory: App[] = [];
     for (let page = 0; page < 20; page++) {
       const response = await dcrApi<{ result?: App[]; details?: { totalResult?: string } }>(
@@ -309,6 +309,104 @@ async function proveDroppedDcrRegistrationResponse() {
   }
   if (primaryFailure !== undefined) {
     throw primaryFailure instanceof Error ? primaryFailure : new Error("DCR scenario failed");
+  }
+
+  // The lost-response proof deliberately never enters RP's compatibility
+  // update. Also test the *real success path*, because anonymous clients are
+  // created in the instance default organization, which can differ from RP's
+  // bootstrap organization. This entire fixture is disposable GitHub CI.
+  const positiveName = "RP isolated DCR JWT compatibility " + randomUUID();
+  const positiveConfig = { get: (key: string) => ({
+    ZITADEL_INTERNAL_URL: issuer,
+    OIDC_ISSUER_URL: issuer,
+    ZITADEL_MANAGEMENT_TOKEN: token,
+    ZITADEL_DCR_REQUEST_TIMEOUT_MS: "10000",
+    ZITADEL_DCR_REGISTRATION_TIMEOUT_MS: "30000",
+  })[key as "ZITADEL_INTERNAL_URL" | "OIDC_ISSUER_URL" |
+      "ZITADEL_MANAGEMENT_TOKEN" | "ZITADEL_DCR_REQUEST_TIMEOUT_MS" |
+      "ZITADEL_DCR_REGISTRATION_TIMEOUT_MS"] } as ConfigService;
+  let positive: { clientId: string; registrationToken: string } | undefined;
+  let compatibilityFailure: unknown;
+  let compatibilityCleanupFailure: unknown;
+  try {
+    const response = await new McpOAuthDcrService(positiveConfig).register({
+      client_name: positiveName,
+      redirect_uris: ["https://chatgpt.com/connector_platform_oauth_redirect"],
+      response_types: ["code"], grant_types: ["authorization_code"],
+      token_endpoint_auth_method: "none",
+    });
+    assert.equal(response.status, 201, "Real ZITADEL DCR compatibility registration failed");
+    const body = JSON.parse(response.body) as {
+      client_id?: string; registration_access_token?: string;
+    };
+    assert.match(body.client_id ?? "", /^[a-zA-Z0-9._~-]{1,128}$/);
+    assert.ok(body.registration_access_token, "Missing scoped DCR registration bearer");
+    positive = { clientId: body.client_id!, registrationToken: body.registration_access_token };
+    const inventoryDeadline = performance.now() + 15000;
+    let app: { id: string; oidcConfig?: { clientId?: string; accessTokenType?: string } } | undefined;
+    do {
+      const inventory = await readDcrInventory(inventoryDeadline);
+      const found = inventory?.filter(item =>
+        item.oidcConfig?.clientId === positive!.clientId &&
+        item.name?.startsWith(positiveName + " (")) ?? [];
+      assert.ok(found.length <= 1, "Ambiguous real DCR compatibility application");
+      app = found[0];
+      if (app?.oidcConfig?.accessTokenType === "OIDC_TOKEN_TYPE_JWT") break;
+      if (performance.now() < inventoryDeadline) await new Promise(resolve => setTimeout(resolve, 100));
+    } while (performance.now() < inventoryDeadline);
+    assert.ok(app, "Real JWT-compatible DCR application missing from management inventory");
+    assert.equal(app.oidcConfig?.accessTokenType, "OIDC_TOKEN_TYPE_JWT",
+      "Real DCR client did not persist the JWT access-token setting");
+    console.log("PASS: real HTTPS ZITADEL DCR success through RP JWT compatibility, independent JWT management readback (#213)");
+  } catch (failure) {
+    compatibilityFailure = failure;
+  } finally {
+    if (positive) {
+      try {
+        const header = { authorization: "Bearer " + positive.registrationToken };
+        const deleted = await originalFetch(cleanupUrl(positive.clientId), {
+          method: "DELETE", headers: header, redirect: "error", signal: AbortSignal.timeout(15000),
+        });
+        assert.equal(deleted.status, 204, "Real DCR compatibility test client cleanup unacknowledged");
+        const deadline = performance.now() + 15000;
+        let status = 0;
+        let remaining = -1;
+        do {
+          const read = await originalFetch(cleanupUrl(positive.clientId), {
+            method: "GET", headers: header, redirect: "error",
+            signal: AbortSignal.timeout(Math.max(1, Math.ceil(deadline - performance.now()))),
+          });
+          status = read.status;
+          void read.body?.cancel().catch(() => undefined);
+          assert.ok([200, 401, 403, 404].includes(status),
+            "Unexpected DCR compatibility cleanup verification status: " + status);
+          const inventory = await readDcrInventory(deadline);
+          assert.ok(inventory, "DCR project disappeared while verifying compatibility cleanup");
+          remaining = inventory.filter(app =>
+            app.oidcConfig?.clientId === positive!.clientId ||
+            app.name?.startsWith(positiveName + " (")).length;
+          if (status === 404 && remaining === 0) break;
+          if (performance.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
+        } while (performance.now() < deadline);
+        assert.equal(status, 404, "Real DCR compatibility client still accessible after deletion");
+        assert.equal(remaining, 0, "Real DCR compatibility application still present after deletion");
+        console.log("PASS: exact successful DCR client removed; GET404 and independent inventory absent (#213)");
+      } catch (failure) {
+        compatibilityCleanupFailure = failure;
+      }
+    }
+  }
+  if (compatibilityFailure !== undefined && compatibilityCleanupFailure !== undefined) {
+    throw new AggregateError([compatibilityFailure, compatibilityCleanupFailure],
+      "DCR compatibility failed and test-client cleanup could not be verified");
+  }
+  if (compatibilityCleanupFailure !== undefined) {
+    throw compatibilityCleanupFailure instanceof Error ? compatibilityCleanupFailure :
+      new Error("DCR compatibility cleanup failed");
+  }
+  if (compatibilityFailure !== undefined) {
+    throw compatibilityFailure instanceof Error ? compatibilityFailure :
+      new Error("DCR compatibility registration failed");
   }
 }
 
