@@ -12,6 +12,33 @@ if (!token || token.includes("\n") || token.includes("\r")) {
 }
 const pageSize = 100;
 const maxPages = 20;
+let verifiedDefaultOrgId;
+// Anonymous RFC7591 clients are owned by ZITADEL's *instance default org*,
+// which may be different from the management token's organization. Without
+// the authoritative scope an empty inventory is not credible orphan evidence.
+// ZITADEL Admin GetDefaultOrg requires iam.read; fail closed if absent.
+async function defaultDcrOrgId() {
+  const response = await fetch(issuer + "/admin/v1/orgs/default", {
+    method: "GET", redirect: "error", signal: AbortSignal.timeout(10000),
+    headers: {
+      authorization: "Bearer " + token,
+      "x-zitadel-instance-host": "auth-sandbox.resource-portal.pl",
+      "x-zitadel-public-host": "auth-sandbox.resource-portal.pl",
+    },
+  });
+  if (response.status !== 200) {
+    throw Error("Cannot verify sandbox default DCR organization: HTTP " + response.status);
+  }
+  const text = await response.text();
+  assert.ok(text.length <= 65536, "Oversized default-organization response");
+  let body;
+  try { body = JSON.parse(text); }
+  catch { throw Error("Invalid default-organization response"); }
+  const id = body?.org?.id;
+  assert.ok(typeof id === "string" && /^\d+$/.test(id),
+    "Missing numeric sandbox default-organization ID");
+  return id;
+}
 async function search(path, offset, queries) {
   const response = await fetch(issuer + path, {
     method: "POST", // search API only: never creates/updates a resource
@@ -22,6 +49,7 @@ async function search(path, offset, queries) {
       "content-type": "application/json",
       "x-zitadel-instance-host": "auth-sandbox.resource-portal.pl",
       "x-zitadel-public-host": "auth-sandbox.resource-portal.pl",
+      "x-zitadel-orgid": verifiedDefaultOrgId,
     },
     body: JSON.stringify({
       query: { limit: pageSize, offset },
@@ -70,6 +98,7 @@ try {
   assert.equal(metadata.issuer, issuer, "Wrong sandbox issuer");
   assert.equal(metadata.registration_endpoint, issuer + "/oauth/v2/register",
     "Unexpected DCR endpoint");
+  verifiedDefaultOrgId = await defaultDcrOrgId();
   const projects = await allPages("/management/v1/projects/_search",
     [{ nameQuery: { name: "ZITADEL DCR", method: "TEXT_QUERY_METHOD_EQUALS" } }]);
   const dcr = projects.filter(p => p.name === "ZITADEL DCR" && typeof p.id === "string");
