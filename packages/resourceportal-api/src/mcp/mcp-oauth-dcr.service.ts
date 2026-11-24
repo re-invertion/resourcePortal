@@ -430,7 +430,9 @@ async function boundedDcrResponseText(response: Response): Promise<string> {
       if (done) break;
       total += value.byteLength;
       if (total > maxBytes) {
-        await reader.cancel();
+        // A malicious/failed upstream stream may never resolve cancel().
+        // Fail closed immediately rather than hanging past the request bound.
+        void reader.cancel().catch(() => undefined);
         throw new BadGatewayException("ZITADEL DCR response exceeded size limit");
       }
       chunks.push(value);
