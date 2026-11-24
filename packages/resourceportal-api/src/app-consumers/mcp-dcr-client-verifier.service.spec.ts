@@ -17,9 +17,11 @@ const config = {
 function mockDcrClient(redirectUris: unknown, clientId = "registered-chatgpt-client") {
   const calls = vi.fn()
     .mockResolvedValueOnce(new Response(JSON.stringify({
+      details: { totalResult: "1" },
       result: [{ id: "dcr-project", name: "ZITADEL DCR" }],
     })))
     .mockResolvedValueOnce(new Response(JSON.stringify({
+      details: { totalResult: "1" },
       result: [{ id: "dcr-app", oidcConfig: { clientId, redirectUris } }],
     })));
   global.fetch = calls as typeof fetch;
@@ -119,7 +121,7 @@ describe("ChatGPT MCP DCR issuance proof (#442)", () => {
       .isTrustedChatGptClient("registered-chatgpt-client")).resolves.toBe(false);
 
     global.fetch = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ result: [project] })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ details: { totalResult: 1 }, result: [project] })))
       .mockResolvedValueOnce(new Response(JSON.stringify({
         details: { totalResult: 201 },
         result: [{ id: "other", oidcConfig: { clientId: "different" } }],
@@ -128,8 +130,9 @@ describe("ChatGPT MCP DCR issuance proof (#442)", () => {
       .isTrustedChatGptClient("registered-chatgpt-client")).resolves.toBe(false);
 
     const calls = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ result: [project] })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ details: { totalResult: 1 }, result: [project] })))
       .mockResolvedValueOnce(new Response(JSON.stringify({
+        details: { totalResult: 2 },
         result: [{ id: "one", oidcConfig: { clientId: "registered-chatgpt-client",
           redirectUris: ["https://chatgpt.com/connector_platform_oauth_redirect"] } },
           { id: "two", oidcConfig: { clientId: "registered-chatgpt-client",
@@ -138,6 +141,72 @@ describe("ChatGPT MCP DCR issuance proof (#442)", () => {
     global.fetch = calls as typeof fetch;
     await expect(new McpDcrClientVerifierService(config)
       .isTrustedChatGptClient("registered-chatgpt-client")).resolves.toBe(false);
+  });
+
+  it("denies a trusted-looking first-page client when a later page duplicates its ID", async () => {
+    const firstPage = Array.from({ length: 100 }, (_, index) => ({
+      id: "app-" + index,
+      oidcConfig: {
+        clientId: index === 0 ? "registered-chatgpt-client" : "unrelated-" + index,
+        redirectUris: index === 0
+          ? ["https://chatgpt.com/connector_platform_oauth_redirect"] : [],
+      },
+    }));
+    const calls = vi.fn()
+      .mockResolvedValueOnce(Response.json({
+        details: { totalResult: 1 },
+        result: [{ id: "dcr-project", name: "ZITADEL DCR" }],
+      }))
+      .mockResolvedValueOnce(Response.json({
+        details: { totalResult: 101 }, result: firstPage,
+      }))
+      .mockResolvedValueOnce(Response.json({
+        details: { totalResult: 101 },
+        result: [{ id: "another-app", oidcConfig: {
+          clientId: "registered-chatgpt-client",
+          redirectUris: ["https://attacker.example.test/callback"],
+        } }],
+      }));
+    global.fetch = calls as typeof fetch;
+    await expect(new McpDcrClientVerifierService(config)
+      .isTrustedChatGptClient("registered-chatgpt-client")).resolves.toBe(false);
+    expect(calls).toHaveBeenCalledTimes(3);
+  });
+
+  it("denies a first-page trusted client if later inventory pages are incomplete", async () => {
+    const firstPage = Array.from({ length: 100 }, (_, index) => ({
+      id: "app-" + index,
+      oidcConfig: {
+        clientId: index === 0 ? "registered-chatgpt-client" : "unrelated-" + index,
+        redirectUris: index === 0
+          ? ["https://chatgpt.com/connector_platform_oauth_redirect"] : [],
+      },
+    }));
+    const calls = vi.fn()
+      .mockResolvedValueOnce(Response.json({
+        details: { totalResult: 1 },
+        result: [{ id: "dcr-project", name: "ZITADEL DCR" }],
+      }))
+      .mockResolvedValueOnce(Response.json({
+        details: { totalResult: 101 }, result: firstPage,
+      }))
+      .mockResolvedValueOnce(Response.json({
+        details: { totalResult: 101 }, result: [],
+      }));
+    global.fetch = calls as typeof fetch;
+    await expect(new McpDcrClientVerifierService(config)
+      .isTrustedChatGptClient("registered-chatgpt-client")).resolves.toBe(false);
+    expect(calls).toHaveBeenCalledTimes(3);
+  });
+
+  it("rejects Management redirects before forwarding the admin bearer", async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce(
+      new Response(null, { status: 302, headers: { location: "https://attacker.example.test/" } }),
+    ) as typeof fetch;
+    await expect(new McpDcrClientVerifierService(config)
+      .isTrustedChatGptClient("registered-chatgpt-client")).resolves.toBe(false);
+    const calls = vi.mocked(global.fetch);
+    expect((calls.mock.calls[0]?.[1] as RequestInit).redirect).toBe("error");
   });
 
   it("rejects a response that exceeds the bounded streaming limit", async () => {
@@ -156,6 +225,6 @@ describe("ChatGPT MCP DCR issuance proof (#442)", () => {
       .isTrustedChatGptClient("registered-chatgpt-client")).resolves.toBe(false);
     global.fetch = vi.fn().mockRejectedValue(new Error("network unavailable")) as typeof fetch;
     await expect(new McpDcrClientVerifierService(config)
-      .isTrustedChatGptClient("registered-chatgpt-client")).rejects.toThrow("network unavailable");
+      .isTrustedChatGptClient("registered-chatgpt-client")).resolves.toBe(false);
   });
 });
