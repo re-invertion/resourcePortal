@@ -44,6 +44,28 @@ describe("DCR real HTTP fault injection (#213)", () => {
     expect(requests).toBe(1);
   });
 
+  it("rejects a real registration HTTP redirect without forwarding caller authorization", async () => {
+    const calls: string[] = [];
+    const service = await withUpstream((req, res) => {
+      calls.push(`${req.method} ${req.url}`);
+      if (req.url === "/oauth/v2/register") {
+        expect(req.headers.authorization).toBe("Bearer caller-registration-token");
+        res.writeHead(307, { location: "/credential-capture" }).end();
+      } else {
+        throw new Error(`Registration Bearer reached redirected path: ${req.url}`);
+      }
+    });
+    let publicError: unknown;
+    try { await service.register({ client_name: "test" }, "Bearer caller-registration-token"); }
+    catch (error) {
+      publicError = error && typeof error === "object" && "getResponse" in error
+        ? (error as { getResponse: () => unknown }).getResponse() : error;
+    }
+    expect(publicError).toMatchObject({ code: "DCR_REGISTRATION_OUTCOME_UNCERTAIN" });
+    expect(JSON.stringify(publicError)).not.toContain("caller-registration-token");
+    expect(calls).toEqual(["POST /oauth/v2/register"]);
+  });
+
   it("marks an accepted POST with a dropped HTTP response as uncertain, never safe-to-retry", async () => {
     let created = 0;
     const service = await withUpstream((_req, res) => {
@@ -86,6 +108,37 @@ describe("DCR real HTTP fault injection (#213)", () => {
     });
     await expect(service.register({})).rejects.toThrow("compatibility update failed with HTTP 503");
     expect(clientExists).toBe(false);
+    expect(calls).toEqual([
+      "POST /oauth/v2/register",
+      "POST /management/v1/projects/_search",
+      "DELETE /oauth/v2/register/synthetic-client",
+    ]);
+  });
+
+  it("rejects a real management redirect without forwarding the management Bearer", async () => {
+    const calls: string[] = [];
+    const service = await withUpstream((req, res) => {
+      calls.push(`${req.method} ${req.url}`);
+      res.setHeader("content-type", "application/json");
+      if (req.method === "POST" && req.url === "/oauth/v2/register") {
+        res.writeHead(201).end(JSON.stringify({
+          client_id: "synthetic-client",
+          registration_access_token: "registration-only-secret",
+          registration_client_uri: "https://auth-synthetic.invalid/oauth/v2/register/synthetic-client",
+        }));
+      } else if (req.method === "POST" && req.url === "/management/v1/projects/_search") {
+        expect(req.headers.authorization).toBe("Bearer synthetic-management-token");
+        res.writeHead(307, { location: "/credential-capture" }).end();
+      } else if (req.method === "DELETE" && req.url === "/oauth/v2/register/synthetic-client") {
+        expect(req.headers.authorization).toBe("Bearer registration-only-secret");
+        res.writeHead(204).end();
+      } else {
+        throw new Error(`Unexpected redirected request: ${req.method} ${req.url}`);
+      }
+    });
+    await expect(service.register({})).rejects.toThrow("ZITADEL DCR upstream request unavailable or timed out");
+    // The registration is compensable; the upstream redirect must never
+    // be followed and the credential may not reach /credential-capture.
     expect(calls).toEqual([
       "POST /oauth/v2/register",
       "POST /management/v1/projects/_search",
