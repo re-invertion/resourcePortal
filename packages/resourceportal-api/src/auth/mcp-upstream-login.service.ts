@@ -178,7 +178,9 @@ export class McpUpstreamLoginService {
       const configuredIssuer = new URL(this.config.get<string>("OIDC_ISSUER_URL") ?? "");
       if (authorizationUrl.protocol !== "https:" ||
           authorizationUrl.origin !== configuredIssuer.origin ||
-          authorizationUrl.username || authorizationUrl.password || authorizationUrl.hash) {
+          authorizationUrl.pathname !== "/oauth/v2/authorize" ||
+          authorizationUrl.search || authorizationUrl.hash ||
+          authorizationUrl.username || authorizationUrl.password) {
         throw new Error("Untrusted issuer metadata");
       }
     } catch {
