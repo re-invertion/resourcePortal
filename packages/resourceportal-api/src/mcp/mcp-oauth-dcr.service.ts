@@ -338,8 +338,43 @@ export class McpOAuthDcrService {
         "x-zitadel-public-host": this.issuerHost(),
       },
     });
-    if (!response.ok) {
+    if (response.status !== 204) {
       throw new BadGatewayException(`ZITADEL DCR rollback failed with HTTP ${response.status}`);
+    }
+    // A DELETE 204 confirms the command was accepted, not that the RFC7592
+    // client projection stopped serving the prior registration bearer. In
+    // ZITADEL v4.17.0 the eventstore removal and read projection are distinct.
+    // Use the *same exact-client bearer* to prove GET404 before reporting a
+    // successful compensation. Never treat 401/403 as proof of removal.
+    const deadline = Date.now() + this.requestTimeoutMs();
+    while (true) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        throw new BadGatewayException("ZITADEL DCR rollback could not verify client absence before deadline");
+      }
+      const check = await this.upstreamFetch(`${this.internalUrl()}${url.pathname}`, {
+        signal: AbortSignal.timeout(Math.max(1, Math.min(this.requestTimeoutMs(), remaining))),
+        method: "GET",
+        redirect: "error",
+        headers: {
+          authorization: `Bearer ${registration.registration_access_token}`,
+          "x-zitadel-instance-host": this.issuerHost(),
+          "x-zitadel-public-host": this.issuerHost(),
+        },
+      });
+      // Avoid buffering or exposing provider bodies containing private data.
+      // A broken body cancellation must not extend the rollback deadline.
+      void check.body?.cancel().catch(() => undefined);
+      if (check.status === 404) return;
+      if (check.status !== 200) {
+        throw new BadGatewayException(
+          `ZITADEL DCR rollback verification failed with HTTP ${check.status}`,
+        );
+      }
+      if (Date.now() >= deadline) {
+        throw new BadGatewayException("ZITADEL DCR rollback client remained accessible");
+      }
+      await sleep(Math.min(100, deadline - Date.now()));
     }
   }
 
