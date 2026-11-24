@@ -121,3 +121,52 @@ Expired grants, consent records and registration records require an explicit
 lifecycle/retention policy before production scale-up; in the draft design,
 these remain rows in PostgreSQL until user/client deletion or an operational
 cleanup is implemented.
+
+## DCR uncertain registration and orphan reconciliation (#213)
+
+A `DCR_REGISTRATION_OUTCOME_UNCERTAIN` response means an upstream POST may have
+created a ZITADEL DCR client without returning usable cleanup credentials.
+**Never retry the registration automatically.** A `DCR_PARTIAL_REGISTRATION`
+response means an identified upstream client was created but compensating DELETE
+was not confirmed; its `clientId` is a reconciliation locator, **not** evidence
+that the application still exists or has been safely removed. Neither result
+counts as a successful registration, successful cleanup, or release rollback test.
+
+1. Restrict the procedure to an authorized operator and the **isolated sandbox**
+   for release validation; do not mutate production ZITADEL or RP data as part
+   of this PR. Preserve sanitized UTC time, instance/issuer host, request ID,
+   failure code, deployment SHA, and (only when explicitly present) client ID.
+   Never copy registration tokens, authorization headers, OAuth codes, URL query
+   strings or credentials into artifacts, tickets or logs.
+2. Using an authorized **read-only** ZITADEL management session, identify the
+   exact `ZITADEL DCR` project. Perform a bounded, fully paginated project-app
+   search, comparing exact client IDs and independently verifying application
+   identity; do not accept an incomplete page or ambiguous results as proof of
+   absence. A failed management API call is `UNKNOWN`, not an empty result.
+3. For a known partial client, compare the returned `clientId` to the exact
+   upstream app. If exactly one app exists, obtain **separate explicit
+   authorization** before any deletion and use only the authenticated issuer's
+   supported management or registration deletion mechanism. Registration
+   metadata is untrusted: validate issuer host and expected DCR path and never
+   forward a bearer to a returned URL or across a redirect. A failed/unknown
+   DELETE result must be independently rechecked before declaring success.
+4. For an uncertain registration without a client ID, bound the search to the
+   incident UTC window and available sanitized metadata; never guess a client
+   from a matching display name alone or bulk-delete matching applications.
+   Escalate ambiguous/missing correlation for manual investigation. A clean
+   search of an unambiguously identified project and complete result set is
+   evidence only for that snapshot, not proof that an earlier POST was never
+   accepted in a delayed projection.
+5. Before a retry, confirm eventual consistency and search the entire DCR
+   project again, recording zero matching orphaned app IDs or a verified
+   deletion of the exact app, along with status, UTC and independently audited
+   operator authorization. Never claim a real RP/ZITADEL database/eventstore
+   rollback PASS from these DCR-specific tests.
+
+The synthetic loopback HTTP tests cover hung initial POST, HTTP 201 headers
+with a stalled body, dropped responses, upstream 307 redirects, management
+errors/body stalls, and both acknowledged and unacknowledged compensating
+DELETEs. The separate sandbox evidence demonstrates one real ZITADEL
+POST201 -> management401 -> RP DELETE204 -> independently verified zero-apps
+case. **An unknown-response orphan in real ZITADEL has not been reconciled end
+to end**, so #213 and the full release acceptance gate remain open.
