@@ -57,6 +57,24 @@ export class McpUpstreamLoginService {
     if (!discovery.registrationEndpoint) {
       throw new ServiceUnavailableException("ZITADEL DCR registration is not available");
     }
+    // Discovery may be corrupted or attacker-influenced. Reject unexpected
+    // DCR endpoints BEFORE a non-idempotent upstream registration POST;
+    // a deterministic local metadata error must not be reported as a
+    // possibly accepted client. In particular, origin equality alone is
+    // insufficient: require the one RFC7591 ZITADEL registration path.
+    try {
+      const registrationUrl = new URL(discovery.registrationEndpoint);
+      const configuredIssuer = new URL(this.config.get<string>("OIDC_ISSUER_URL") ?? "");
+      if (registrationUrl.protocol !== "https:" ||
+          registrationUrl.origin !== configuredIssuer.origin ||
+          registrationUrl.pathname !== "/oauth/v2/register" ||
+          registrationUrl.search || registrationUrl.hash ||
+          registrationUrl.username || registrationUrl.password) {
+        throw new Error("Untrusted DCR metadata");
+      }
+    } catch {
+      throw new ServiceUnavailableException("Untrusted ZITADEL DCR registration endpoint");
+    }
     // Canonical RP origin validation happens before attempting the POST;
     // local configuration failures are not uncertain upstream mutations.
     const callbackUri = this.callback(origin);
