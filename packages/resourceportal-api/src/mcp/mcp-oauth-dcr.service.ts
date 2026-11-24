@@ -347,12 +347,11 @@ export class McpOAuthDcrService {
   private async upstreamFetch(url: string, options: RequestInit): Promise<Response> {
     try {
       return await fetch(url, options);
-    } catch (error) {
-      if (error instanceof TypeError ||
-          (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError"))) {
-        throw new BadGatewayException("ZITADEL DCR upstream request unavailable or timed out");
-      }
-      throw error;
+    } catch {
+      // fetch() can reject with arbitrary provider/transport exceptions,
+      // including non-standard errors containing private headers or URLs.
+      // Never let any such exception escape into OAuth responses or logs.
+      throw new BadGatewayException("ZITADEL DCR upstream request unavailable or timed out");
     }
   }
 
