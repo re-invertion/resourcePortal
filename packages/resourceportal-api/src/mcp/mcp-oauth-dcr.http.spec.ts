@@ -44,6 +44,28 @@ describe("DCR real HTTP fault injection (#213)", () => {
     expect(requests).toBe(1);
   });
 
+  it("sanitizes a real HTTP 400 response body that stalls after error headers", async () => {
+    let requests = 0;
+    const service = await withUpstream((req, res) => {
+      expect(req.url).toBe("/oauth/v2/register");
+      requests += 1;
+      res.writeHead(400, { "content-type": "application/json", "transfer-encoding": "chunked" });
+      res.write('{"error":"invalid_client_metadata","secret":"do-not-leak');
+      // ZITADEL explicitly rejected registration, but never finished its
+      // error body: this must not surface a raw AbortError or credentials.
+    });
+    const start = Date.now();
+    let failure: unknown;
+    try { await service.register({ client_name: "synthetic-error-body-stall" }); }
+    catch (error) { failure = error && typeof error === "object" && "getResponse" in error
+      ? (error as { getResponse: () => unknown }).getResponse() : error; }
+    expect(failure).toMatchObject({ statusCode: 502,
+      message: "ZITADEL DCR upstream response unavailable or timed out" });
+    expect(JSON.stringify(failure)).not.toContain("do-not-leak");
+    expect(Date.now() - start).toBeLessThan(2600);
+    expect(requests).toBe(1);
+  });
+
   it("bounds a real HTTP 201 response body that stalls after the headers", async () => {
     let accepted = 0;
     const service = await withUpstream((req, res) => {
