@@ -58,6 +58,17 @@ async function auditWithStubbedInventory(scenario) {
       if (scenario === "denied") {
         return Response.json({ error: "permission_denied" }, { status: 403 });
       }
+      if (scenario === "empty") {
+        // Actual ZITADEL protobuf JSON can omit result and totalResult for
+        // zero-valued fields, but retains the ListDetails object.
+        return Response.json({ details: {} });
+      }
+      if (scenario === "missing-details") {
+        return Response.json({});
+      }
+      if (scenario === "nonzero-without-total") {
+        return Response.json({ details: {}, result: [{ id: "app-0" }] });
+      }
       const firstPage = Array.from({ length: 100 }, (_, i) => ({
         id: "app-" + i, name: i === 0 ? prefix + "candidate" : "unrelated-" + i,
         oidcConfig: { clientId: "client-" + i },
@@ -135,4 +146,27 @@ test("sandbox audit refuses malformed default-org IDs instead of using token org
   assert.match(result.errors, /Missing numeric sandbox default-organization ID/);
   assert.equal(result.logs, "");
   assert.deepEqual(result.seen.map(x => x.method), ["GET", "GET"]);
+});
+
+test("sandbox audit accepts protobuf-zero empty app list only with list details", async () => {
+  const result = await auditWithStubbedInventory("empty");
+  assert.equal(result.exitCode, 0);
+  const report = JSON.parse(result.logs);
+  assert.equal(report.auditedApplications, 0);
+  assert.deepEqual(report.matchingCandidates, []);
+  assert.deepEqual(result.seen.map(x => x.method), ["GET", "GET", "POST", "POST"]);
+});
+
+test("sandbox audit fails closed if an empty app page lacks ListDetails", async () => {
+  const result = await auditWithStubbedInventory("missing-details");
+  assert.equal(result.exitCode, 1);
+  assert.match(result.errors, /Invalid project\/app search response/);
+  assert.equal(result.logs, "");
+});
+
+test("sandbox audit fails closed when nonempty apps omit the total count", async () => {
+  const result = await auditWithStubbedInventory("nonzero-without-total");
+  assert.equal(result.exitCode, 1);
+  assert.match(result.errors, /Missing nonzero management search total/);
+  assert.equal(result.logs, "");
 });
