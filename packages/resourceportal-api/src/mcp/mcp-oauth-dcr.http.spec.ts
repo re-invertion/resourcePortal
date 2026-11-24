@@ -308,6 +308,52 @@ describe("DCR real HTTP fault injection (#213)", () => {
     ]);
   });
 
+  it("does not accept DELETE204 when the real HTTP registration client stays accessible", async () => {
+    // Fault-inject an issuer which ACKs removal but continues to serve the
+    // exact RFC7592 client from a lagging read projection beyond the bound.
+    let clientExists = false;
+    let deleteCount = 0;
+    let readCount = 0;
+    const service = await withUpstream((req, res) => {
+      const path = "/oauth/v2/register/lagging-rollback-client";
+      if (req.method === "POST" && req.url === "/oauth/v2/register") {
+        clientExists = true;
+        res.writeHead(201, { "content-type": "application/json" }).end(JSON.stringify({
+          client_id: "lagging-rollback-client",
+          registration_access_token: "lagging-rollback-private-token",
+          registration_client_uri: "https://auth-synthetic.invalid" + path,
+        }));
+      } else if (req.method === "POST" && req.url === "/management/v1/projects/_search") {
+        res.writeHead(503).end("{}");
+      } else if (req.method === "DELETE" && req.url === path) {
+        expect(req.headers.authorization).toBe("Bearer lagging-rollback-private-token");
+        deleteCount += 1;
+        res.writeHead(204).end();
+      } else if (req.method === "GET" && req.url === path) {
+        expect(req.headers.authorization).toBe("Bearer lagging-rollback-private-token");
+        readCount += 1;
+        res.writeHead(200, { "content-type": "application/json" }).end("{}");
+      } else {
+        res.writeHead(500).end("{}");
+      }
+    });
+    const started = Date.now();
+    let publicError: unknown;
+    try { await service.register({ client_name: "lagged-projection-check" }); }
+    catch (error) {
+      publicError = error && typeof error === "object" && "getResponse" in error
+        ? (error as { getResponse: () => unknown }).getResponse() : error;
+    }
+    expect(publicError).toMatchObject({
+      code: "DCR_PARTIAL_REGISTRATION", clientId: "lagging-rollback-client",
+    });
+    expect(JSON.stringify(publicError)).not.toContain("lagging-rollback-private-token");
+    expect(deleteCount).toBe(1);
+    expect(readCount).toBeGreaterThanOrEqual(2);
+    expect(clientExists).toBe(true);
+    expect(Date.now() - started).toBeLessThan(2600);
+  });
+
   it("classifies the actual HTTP 201 + management 503 + rollback DELETE 503 orphan", async () => {
     const methods: string[] = [];
     let upstreamClientExists = false;
