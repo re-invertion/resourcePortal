@@ -19,6 +19,8 @@ export async function runOidcAuthorizationE2E(input: {
   password: string;
   /** Preserve an active refresh token only for the isolated per-client proof. */
   skipLogout?: boolean;
+  /** Negative assertion on the actual isolated HTTPS issuer, never production. */
+  assertCodeReplayDenied?: boolean;
 }) {
   assert.equal(input.issuer, "https://localhost:8443");
   const discovery = await (await fetch(input.issuer + "/.well-known/openid-configuration")).json() as {
@@ -130,6 +132,25 @@ export async function runOidcAuthorizationE2E(input: {
       const reason = errorBody.includes("Errors.AuthRequest.NotFound")
         ? "OIDC_AUTH_REQUEST_NOT_FOUND" : "OIDC_TOKEN_EXCHANGE_DENIED";
       throw new Error("ZITADEL " + reason + " HTTP " + tokenResponse.status);
+    }
+    if (input.assertCodeReplayDenied) {
+      // The same authorization code was just consumed by a real confidential
+      // Web + PKCE exchange. It must not be redeemable twice (#498).
+      // Never log the code, verifier, Basic header, callback URL or response.
+      const replayResponse = await fetch(discovery.token_endpoint, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          authorization: "Basic " + Buffer.from(input.clientId + ":" + input.clientSecret).toString("base64"),
+        },
+        body: new URLSearchParams(body),
+        signal: AbortSignal.timeout(20000),
+      });
+      assert.ok(!replayResponse.ok,
+        "SECURITY: real HTTPS issuer accepted a consumed authorization code a second time");
+      assert.ok(replayResponse.status >= 400 && replayResponse.status < 500,
+        "Expected a deterministic OAuth client rejection for an already-consumed code");
+      console.log("PASS: real HTTPS ZITADEL rejects replay of an already-redeemed PKCE code (#498)");
     }
     const tokens = await tokenResponse.json() as { id_token?: string; access_token?: string; refresh_token?: string };
     assert.ok(tokens.id_token && tokens.access_token && tokens.refresh_token,
