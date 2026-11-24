@@ -402,6 +402,13 @@ async function proveDroppedDcrRegistrationResponse() {
         assert.equal(status, 404, "Real DCR compatibility client still accessible after deletion");
         assert.equal(remaining, 0, "Real DCR compatibility application still present after deletion");
         console.log("PASS: exact successful DCR client removed; GET404 and independent inventory absent (#213)");
+        // #442: a revoked DCR client must lose its authorization eligibility.
+        // Test the same production exact-client verifier, using the isolated
+        // ZITADEL project's completed inventory projection, not mocks.
+        const verifier = new McpDcrClientVerifierService(positiveConfig);
+        assert.equal(await verifier.isTrustedChatGptClient(positive.clientId), false,
+          "Deleted ZITADEL DCR client remained trusted for MCP issuance");
+        console.log("PASS: real HTTPS ZITADEL removed DCR client is no longer eligible for ChatGPT token issuance (#442)");
       } catch (failure) {
         compatibilityCleanupFailure = failure;
       }
