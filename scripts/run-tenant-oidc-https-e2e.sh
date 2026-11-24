@@ -53,37 +53,6 @@ done
   echo "Real HTTPS ZITADEL issuer did not become ready" >&2
   exit 1
 }
-# Required DCR capability check on the isolated, pinned issuer. This is a
-# READ-ONLY preflight: no security-policy mutation, client registration or
-# success-by-skipping is permitted. Fail early with a clear prerequisite.
-node <<'NODE'
-const assert = require('node:assert/strict');
-(async () => {
-  const issuer = 'https://localhost:8443';
-  assert.equal(process.env.TENANT_OIDC_E2E_ISOLATED, 'true');
-  assert.equal(process.env.GITHUB_ACTIONS, 'true');
-  const response = await fetch(issuer + '/.well-known/openid-configuration', {
-    method: 'GET',
-    redirect: 'error',
-    signal: AbortSignal.timeout(15000),
-    headers: { accept: 'application/json' },
-  });
-  assert.equal(response.status, 200, 'Isolated ZITADEL discovery must return HTTP 200');
-  const discovery = await response.json();
-  assert.equal(discovery.issuer, issuer, 'Isolated ZITADEL issuer mismatch');
-  if (discovery.registration_endpoint !== issuer + '/oauth/v2/register') {
-    console.error('BLOCKED: isolated ZITADEL v4.17 does not advertise its exact OAuth DCR endpoint.');
-    console.error('Prerequisite: an authorized operator must enable DCR on the disposable test issuer.');
-    console.error('This test will not modify issuer policy, skip the real DCR gate or use sandbox as a substitute.');
-    process.exitCode = 1;
-    return;
-  }
-  console.log('PASS: isolated HTTPS issuer advertises its exact OAuth DCR endpoint.');
-})().catch(error => {
-  console.error('BLOCKED: isolated HTTPS DCR preflight failed:', error.message);
-  process.exitCode = 1;
-});
-NODE
 cat >.env <<EOF
 NODE_ENV=test
 DATABASE_URL=postgresql://resource_portal:resource_portal@localhost:55432/resource_portal?schema=public
@@ -116,6 +85,58 @@ source "$root/.env"
 set +a
 export TENANT_OIDC_E2E_ISOLATED=true
 export ZITADEL_MANAGEMENT_TOKEN="$(tr -d '\r\n' <"$root/var/federation/zitadel/admin.pat")"
+
+# Provision DCR only on the disposable GitHub-hosted test issuer. The real
+# MCP registration proof sends an anonymous RFC 7591 request, so this
+# fixture needs open registration. Never apply this policy to a shared issuer.
+node <<'NODE'
+const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const { setTimeout: delay } = require('node:timers/promises');
+(async () => {
+  const issuer = 'https://localhost:8443';
+  assert.equal(process.env.TENANT_OIDC_E2E_ISOLATED, 'true');
+  assert.equal(process.env.GITHUB_ACTIONS, 'true');
+  assert.equal(process.env.RUNNER_ENVIRONMENT, 'github-hosted');
+  const discoveryUrl = issuer + '/.well-known/openid-configuration';
+  const getDiscovery = async () => {
+    const response = await fetch(discoveryUrl, {
+      method: 'GET', redirect: 'error', signal: AbortSignal.timeout(15000),
+      headers: { accept: 'application/json' },
+    });
+    assert.equal(response.status, 200, 'Isolated ZITADEL discovery must return HTTP 200');
+    const discovery = await response.json();
+    assert.equal(discovery.issuer, issuer, 'Isolated ZITADEL issuer mismatch');
+    return discovery;
+  };
+  await getDiscovery();
+  const pat = (await fs.readFile('var/federation/zitadel/admin.pat', 'utf8')).trim();
+  assert.ok(pat.length > 0 && !/\s/.test(pat), 'Missing or invalid isolated bootstrap PAT');
+  const settings = await fetch(issuer + '/v2/settings/security', {
+    method: 'PUT', redirect: 'error', signal: AbortSignal.timeout(15000),
+    headers: { authorization: 'Bearer ' + pat, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      dynamicClientRegistration: { enabled: true, allowUnauthenticated: true },
+    }),
+  });
+  assert.equal(settings.status, 200, 'Isolated ZITADEL DCR bootstrap failed');
+  // The policy event is projected asynchronously. Keep the real discovery
+  // prerequisite fail-closed, with bounded polling rather than a fixed sleep.
+  for (let attempt = 0; attempt < 30; attempt++) {
+    const discovery = await getDiscovery();
+    if (discovery.registration_endpoint === issuer + '/oauth/v2/register') {
+      console.log('PASS: isolated HTTPS issuer advertises its exact OAuth DCR endpoint.');
+      return;
+    }
+    await delay(1000);
+  }
+  throw new Error('Isolated ZITADEL DCR endpoint not advertised after bootstrap');
+})().catch(error => {
+  // Do not expose administrative bearer or provider response bodies.
+  console.error('BLOCKED: isolated HTTPS DCR bootstrap failed:', error.message);
+  process.exitCode = 1;
+});
+NODE
 
 (
   cd packages/resourceportal-api
