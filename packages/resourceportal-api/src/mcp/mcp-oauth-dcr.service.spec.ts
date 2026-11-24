@@ -524,6 +524,24 @@ describe("DCR partial registration compensation (#213)", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("sanitizes an unexpected upstream management exception after confirmed DELETE", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(registration())
+      .mockRejectedValueOnce(new Error("Transport failure: Bearer private-management-secret at http://zitadel:8080"))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    global.fetch = fetchMock as typeof fetch;
+    let failure: unknown;
+    try { await service().register({}); } catch (error) {
+      failure = error && typeof error === "object" && "getResponse" in error
+        ? (error as { getResponse: () => unknown }).getResponse() : error;
+    }
+    expect(JSON.stringify(failure)).toContain("ZITADEL DCR upstream request unavailable or timed out");
+    expect(JSON.stringify(failure)).not.toContain("private-management-secret");
+    expect(JSON.stringify(failure)).not.toContain("http://zitadel:8080");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls[2]?.[0]).toBe("http://zitadel:8080/oauth/v2/register/client-1");
+  });
+
   it("keeps the original compatibility error after confirmed rollback success", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(registration())
