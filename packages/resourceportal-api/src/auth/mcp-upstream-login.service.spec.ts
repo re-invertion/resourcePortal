@@ -132,6 +132,9 @@ describe("#442 MCP identity-only upstream OAuth PKCE, tenant scope and replay", 
     "https://attacker.invalid/oauth/v2/authorize",
     "http://zitadel.example.test/oauth/v2/authorize",
     "https://admin:secret@zitadel.example.test/oauth/v2/authorize",
+    "https://zitadel.example.test/admin/privileged",
+    "https://zitadel.example.test/oauth/v2/authorize?redirect=https://attacker.invalid",
+    "https://zitadel.example.test/oauth/v2/authorize#forged",
     "not-a-url",
   ])("rejects untrusted authorization metadata before non-idempotent identity DCR (%s)", async (endpoint) => {
     const f = fixture();
