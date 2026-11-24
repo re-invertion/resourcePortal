@@ -433,6 +433,29 @@ describe("MCP DCR bounded response and deadline (#213)", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("does not await an upstream stream cancellation that never resolves after oversized HTTP 201", async () => {
+    let cancellations = 0;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new Uint8Array(1_048_577)); },
+      cancel() {
+        cancellations += 1;
+        return new Promise<void>(() => {}); // hostile or broken upstream cancel
+      },
+    });
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(body, { status: 201 }));
+    global.fetch = fetchMock as typeof fetch;
+    const start = Date.now();
+    let error: unknown;
+    try { await service().register({}); } catch (cause) {
+      error = cause && typeof cause === "object" && "getResponse" in cause
+        ? (cause as { getResponse: () => unknown }).getResponse() : cause;
+    }
+    expect(error).toMatchObject({ code: "DCR_REGISTRATION_OUTCOME_UNCERTAIN" });
+    expect(Date.now() - start).toBeLessThan(1500);
+    expect(cancellations).toBe(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("provides AbortSignals on the registration and management requests", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ client_id: "c" }), { status: 201 }))
