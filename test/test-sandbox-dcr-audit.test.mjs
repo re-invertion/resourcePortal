@@ -32,8 +32,21 @@ async function auditWithStubbedInventory(scenario) {
         assert.equal(options?.method, "GET");
         return Response.json({ issuer, registration_endpoint: issuer + "/oauth/v2/register" });
       }
+      if (path === "/admin/v1/orgs/default") {
+        assert.equal(options?.method, "GET");
+        assert.equal(options?.headers.authorization, "Bearer test-private-audit-token");
+        if (scenario === "missing-default-permission") {
+          return Response.json({ error: "permission_denied" }, { status: 403 });
+        }
+        if (scenario === "invalid-default-org") {
+          return Response.json({ org: { id: "not-a-zitadel-org" } });
+        }
+        return Response.json({ org: { id: "321456789000000123" } });
+      }
       assert.equal(options?.method, "POST", "Audit must never mutate resources");
       assert.equal(options?.headers.authorization, "Bearer test-private-audit-token");
+      assert.equal(options?.headers["x-zitadel-orgid"], "321456789000000123",
+        "Management search must be scoped to the independently verified default org");
       const body = JSON.parse(options.body);
       if (path === projectPath) {
         return Response.json({
@@ -77,7 +90,7 @@ test("sandbox audit refuses a duplicated app across complete-count pages", async
   assert.equal(result.exitCode, 1);
   assert.match(result.errors, /Repeated management identity across pages; audit is UNKNOWN/);
   assert.equal(result.logs, "", "A partial inventory must not be presented as a complete snapshot");
-  assert.deepEqual(result.seen.map(x => x.method), ["GET", "POST", "POST", "POST"]);
+  assert.deepEqual(result.seen.map(x => x.method), ["GET", "GET", "POST", "POST", "POST"]);
   assert.doesNotMatch(result.errors, /test-private-audit-token/);
 });
 
@@ -91,7 +104,7 @@ test("sandbox audit reports exact candidate IDs on complete unique pages without
     applicationId: "app-0", clientId: "client-0", name: prefix + "candidate",
   }]);
   assert.equal(result.errors, "");
-  assert.deepEqual(result.seen.map(x => x.method), ["GET", "POST", "POST", "POST"]);
+  assert.deepEqual(result.seen.map(x => x.method), ["GET", "GET", "POST", "POST", "POST"]);
   assert.doesNotMatch(result.logs, /test-private-audit-token/);
 });
 
@@ -100,6 +113,26 @@ test("sandbox audit fails closed on management permission denial", async () => {
   assert.equal(result.exitCode, 1);
   assert.match(result.errors, /Sandbox management search failed with HTTP 403/);
   assert.equal(result.logs, "");
-  assert.deepEqual(result.seen.map(x => x.method), ["GET", "POST", "POST"]);
+  assert.deepEqual(result.seen.map(x => x.method), ["GET", "GET", "POST", "POST"]);
   assert.doesNotMatch(result.errors, /test-private-audit-token/);
+});
+
+test("sandbox audit refuses unknown instance-default-org scope before any management search", async () => {
+  const result = await auditWithStubbedInventory("missing-default-permission");
+  assert.equal(result.exitCode, 1);
+  assert.match(result.errors, /Cannot verify sandbox default DCR organization: HTTP 403/);
+  assert.equal(result.logs, "");
+  assert.deepEqual(result.seen, [
+    { method: "GET", path: "/.well-known/openid-configuration" },
+    { method: "GET", path: "/admin/v1/orgs/default" },
+  ]);
+  assert.doesNotMatch(result.errors, /test-private-audit-token/);
+});
+
+test("sandbox audit refuses malformed default-org IDs instead of using token org", async () => {
+  const result = await auditWithStubbedInventory("invalid-default-org");
+  assert.equal(result.exitCode, 1);
+  assert.match(result.errors, /Missing numeric sandbox default-organization ID/);
+  assert.equal(result.logs, "");
+  assert.deepEqual(result.seen.map(x => x.method), ["GET", "GET"]);
 });
