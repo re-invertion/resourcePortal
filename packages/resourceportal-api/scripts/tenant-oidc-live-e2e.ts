@@ -83,6 +83,16 @@ async function proveDroppedDcrRegistrationResponse() {
   let registrationPosts = 0;
   let registrationHttpStatus: number | undefined;
   const registerEndpoint = issuer + "/oauth/v2/register";
+  // DCR is only advertised when the isolated issuer explicitly enables it.
+  // Perform a read-only discovery check; never change issuer settings here.
+  const dcrDiscoveryResponse = await originalFetch(issuer + "/.well-known/openid-configuration", {
+    redirect: "error", signal: AbortSignal.timeout(15000),
+  });
+  assert.equal(dcrDiscoveryResponse.status, 200, "Isolated issuer discovery unavailable");
+  const dcrDiscovery = await dcrDiscoveryResponse.json() as { registration_endpoint?: unknown };
+  if (dcrDiscovery.registration_endpoint !== registerEndpoint) {
+    throw new Error("Isolated ZITADEL DCR endpoint not advertised; no registration POST sent");
+  }
   const cleanupUrl = (clientId: string) => {
     assert.match(clientId, /^[a-zA-Z0-9._~-]{1,128}$/);
     return issuer + "/oauth/v2/register/" + clientId;
@@ -134,8 +144,10 @@ async function proveDroppedDcrRegistrationResponse() {
     }
     assert.equal(registrationPosts, 1,
       "MCP DCR test never sent exactly one real registration POST");
-    assert.equal(registrationHttpStatus, 201,
-      "Actual ZITADEL DCR registration HTTP status (no body/secret logged)");
+    if (registrationHttpStatus !== 201) {
+      throw new Error("Actual isolated ZITADEL DCR POST returned HTTP " +
+        String(registrationHttpStatus ?? "no-response") + "; no accepted client proof");
+    }
     assert.ok(accepted, "Real HTTP201 did not return valid registration metadata");
     assert.equal((publicResult as { code?: string } | undefined)?.code,
       "DCR_REGISTRATION_OUTCOME_UNCERTAIN");
