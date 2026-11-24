@@ -11,6 +11,7 @@ function service() {
         ZITADEL_INTERNAL_URL: "http://zitadel:8080",
         OIDC_ISSUER_URL: "https://auth.resource-portal.test",
         ZITADEL_MANAGEMENT_TOKEN: "management-token",
+        ZITADEL_DCR_DEFAULT_ORGANIZATION_ID: "401000000000000000",
       })[key],
     ),
   } as unknown as ConfigService);
