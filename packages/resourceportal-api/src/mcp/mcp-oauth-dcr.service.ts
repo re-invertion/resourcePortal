@@ -46,6 +46,10 @@ export class McpOAuthDcrService {
       response = await this.upstreamFetch(registerUrl, {
       signal: AbortSignal.timeout(timeoutMs),
       method: "POST",
+      // The DCR registration request can include an OAuth Authorization
+      // header supplied by the client. Never let an upstream redirect
+      // forward that credential to an unrelated endpoint or issuer path.
+      redirect: "error",
       headers: {
         "content-type": "application/json",
         "x-zitadel-instance-host": issuerHost,
@@ -244,6 +248,8 @@ export class McpOAuthDcrService {
     const response = await this.upstreamFetch(`${this.internalUrl()}${path}`, {
       signal: AbortSignal.timeout(this.requestTimeoutMs(deadline)),
       method,
+      // Management Bearer must never traverse redirects to another endpoint.
+      redirect: "error",
       headers: {
         authorization: `Bearer ${this.managementToken()}`,
         "content-type": "application/json",
