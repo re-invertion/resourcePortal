@@ -414,6 +414,25 @@ describe("MCP DCR bounded response and deadline (#213)", () => {
     expect(JSON.stringify(failure)).not.toContain("secret-registration-credential");
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+  it.each([
+    undefined, null, {}, [], 42, "", "nested/invalid", "x".repeat(129),
+  ])("fails closed on a malformed successful client_id (%s) without management or DELETE", async (id) => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({
+      client_id: id,
+      registration_access_token: "registration-secret-never-used",
+      registration_client_uri: "https://auth.resource-portal.test/oauth/v2/register/valid-id",
+    }), { status: 201 }));
+    global.fetch = fetchMock as typeof fetch;
+    let error: unknown;
+    try { await service().register({}); } catch (cause) {
+      error = cause && typeof cause === "object" && "getResponse" in cause
+        ? (cause as { getResponse: () => unknown }).getResponse() : cause;
+    }
+    expect(error).toMatchObject({ code: "DCR_REGISTRATION_OUTCOME_UNCERTAIN" });
+    expect(JSON.stringify(error)).not.toContain("registration-secret-never-used");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("provides AbortSignals on the registration and management requests", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ client_id: "c" }), { status: 201 }))
