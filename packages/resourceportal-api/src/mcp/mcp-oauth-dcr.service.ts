@@ -101,7 +101,7 @@ export class McpOAuthDcrService {
         // not conceal that partial state by rethrowing only the update error.
         // Expose the client id (never the registration bearer/URI) so an
         // operator can locate and remove it before retrying registration.
-        const clientId = /^[a-zA-Z0-9._-]{1,128}$/.test(registration.client_id)
+        const clientId = /^[a-zA-Z0-9._~-]{1,128}$/.test(registration.client_id)
           ? registration.client_id : "(inspect ZITADEL registration records)";
         throw new BadGatewayException({
           code: "DCR_PARTIAL_REGISTRATION",
@@ -129,8 +129,12 @@ export class McpOAuthDcrService {
     } catch {
       throw new BadGatewayException("ZITADEL DCR returned invalid JSON");
     }
-    if (!registration.client_id) {
-      throw new BadGatewayException("ZITADEL DCR response did not include client_id");
+    // An accepted upstream registration may be unidentifiable when client_id
+    // is not the expected bounded URI-path-safe scalar. Never attempt a
+    // management mutation or compensating DELETE against a coerced value.
+    if (typeof registration.client_id !== "string" ||
+        !/^[a-zA-Z0-9._~-]{1,128}$/.test(registration.client_id)) {
+      throw new BadGatewayException("ZITADEL DCR response did not include a valid client_id");
     }
     return registration as DcrRegistrationResponse & { client_id: string };
   }
