@@ -1,0 +1,45 @@
+name: Sandbox DCR Discovery (read-only)
+
+# Independent signal that the existing sandbox advertises DCR.
+# NOT a replacement for isolated ZITADEL HTTPS real DCR registration,
+# orphan reconciliation or the required RP/ZITADEL rollback certification.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/sandbox-dcr-discovery.yml'
+      - 'packages/resourceportal-api/src/mcp/mcp-oauth-dcr.service.ts'
+      - 'packages/resourceportal-api/scripts/tenant-oidc-live-e2e.ts'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sandbox-dcr-discovery-readonly:
+    name: Existing sandbox advertises expected OAuth DCR endpoint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check exact sandbox discovery (GET only, no registration)
+        env:
+          EXPECTED_ISSUER: https://auth-sandbox.resource-portal.pl
+        shell: bash
+        run: |
+          node <<'NODE'
+          const assert = require('node:assert/strict');
+          const issuer = process.env.EXPECTED_ISSUER;
+          assert.equal(issuer, 'https://auth-sandbox.resource-portal.pl');
+          const response = await fetch(issuer + '/.well-known/openid-configuration', {
+            method: 'GET',
+            redirect: 'error',
+            signal: AbortSignal.timeout(15000),
+            headers: { accept: 'application/json' },
+          });
+          assert.equal(response.status, 200, 'Sandbox OIDC discovery must return HTTP 200');
+          const data = await response.json();
+          assert.equal(data.issuer, issuer, 'Sandbox issuer mismatch');
+          assert.equal(data.registration_endpoint, issuer + '/oauth/v2/register',
+            'Sandbox does not advertise exact OAuth DCR registration endpoint');
+          console.log('PASS: existing SANDBOX advertises exact DCR endpoint (read-only GET).');
+          console.log('NOT CERTIFIED: no POST201, lost response, orphan lookup, DELETE or real CI issuer settings tested.');
+          NODE
