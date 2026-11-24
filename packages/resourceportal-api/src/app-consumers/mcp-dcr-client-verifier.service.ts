@@ -63,7 +63,7 @@ export class McpDcrClientVerifierService {
     if (projectTotal !== 1 || !Array.isArray(projectList) || projectList.length !== 1) {
       return false;
     }
-    const project = projectList[0];
+    const project: unknown = projectList[0];
     if (!isRecord(project) || project.name !== "ZITADEL DCR") return false;
     if (!isRecord(project) || typeof project.id !== "string") return false;
 
