@@ -311,7 +311,8 @@ export class McpOAuthDcrService {
     if ((url.protocol !== "https:" && url.protocol !== "http:") ||
         url.host !== this.issuerHost() ||
         url.username || url.password || url.search || url.hash ||
-        !/^\/oauth\/v2\/register\/[a-zA-Z0-9._~-]+$/.test(url.pathname)) {
+        !/^\/oauth\/v2\/register\/[a-zA-Z0-9._~-]+$/.test(url.pathname) ||
+        url.pathname !== `/oauth/v2/register/${registration.client_id}`) {
       throw new BadGatewayException("ZITADEL DCR rollback URI was not trusted");
     }
     const response = await this.upstreamFetch(`${this.internalUrl()}${url.pathname}`, {
