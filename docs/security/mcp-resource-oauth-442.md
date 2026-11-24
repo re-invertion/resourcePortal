@@ -170,3 +170,35 @@ DELETEs. The separate sandbox evidence demonstrates one real ZITADEL
 POST201 -> management401 -> RP DELETE204 -> independently verified zero-apps
 case. **An unknown-response orphan in real ZITADEL has not been reconciled end
 to end**, so #213 and the full release acceptance gate remain open.
+
+## MCP identity-only upstream DCR partial state (#442)
+
+The dedicated identity-only MCP ZITADEL client is **separate** from the generic
+DCR compatibility registration above. An HTTP 201 accepted upstream
+registration followed by an unreadable/invalid response is classified as
+`MCP_IDENTITY_DCR_REGISTRATION_OUTCOME_UNCERTAIN`. A valid HTTP 201 followed
+by an unsuccessful local `mcpOAuthUpstreamClient` insert, including a
+concurrent-first-connect uniqueness race, is classified as
+`MCP_IDENTITY_DCR_PARTIAL_REGISTRATION` with a bounded numeric `clientId`.
+This is a **potential orphan** even if another concurrent request bound its
+own client successfully. Never report the losing transaction as a successful
+new connection, automatically retry the non-idempotent DCR POST or silently
+use the race winner as proof that the extra ZITADEL app was cleaned up.
+
+Use a read-only-first, separately authorized operator reconciliation:
+identify the exact tenant and authenticated issuer/project, compare the
+read-only RP `mcpOAuthUpstreamClient` binding with the entire paginated ZITADEL
+DCR application list, and independently establish which distinct numeric
+client ID was registered by the failed request. No deletion can be inferred
+from a conflicting RP uniqueness constraint, nor from an invalid HTTP body.
+Do not delete an app while its ownership is ambiguous, particularly when an
+existing client is in use for another pending consent. Require a separate
+explicit operator authorization for an exact-client deletion and verify the
+post-deletion project inventory independently. Do not store bearer tokens,
+registration secrets, callback URL query strings or PKCE materials in logs.
+
+These changes classify a failure and prevent a **false-success** result;
+they do **not** automatically clean up an orphan, do not establish a live
+ZITADEL unknown-response reconciliation, and are not evidence of a real
+RP/ZITADEL eventstore/database release rollback. Both #442 and #213 retain
+those outstanding acceptance criteria.
