@@ -125,7 +125,8 @@ async function startDeviceAuthServer(options = {}) {
       }
       if (req.method === "GET" && req.url === "/.well-known/openid-configuration") {
         return json(200, {
-          issuer: baseUrl,
+          ...(options.discoveryIssuer === null
+            ? {} : { issuer: options.discoveryIssuer ?? baseUrl }),
           device_authorization_endpoint: `${baseUrl}/oauth/v2/device_authorization`,
           token_endpoint: `${baseUrl}/oauth/v2/token`,
           revocation_endpoint: `${baseUrl}/oauth/v2/revoke`,
@@ -220,6 +221,76 @@ test("interactive login completes device flow, validates RP token, then stores i
 
     const validation = server.requests.find((r) => r.url === "/api/auth/me");
     assert.equal(validation.headers.authorization, "Bearer device-token");
+  } finally {
+    await server.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("OIDC discovery must contain issuer and match the configured RP identity provider", async () => {
+  for (const discoveryIssuer of [null, "https://different-issuer.example.invalid"]) {
+    const home = withHome();
+    const server = await startDeviceAuthServer({ discoveryIssuer });
+    try {
+      const { interactiveLogin, readConfig } = loadAuth();
+      await assert.rejects(
+        interactiveLogin(server.apiUrl, testRuntime()),
+        /OIDC discovery issuer mismatch/,
+      );
+      assert.deepEqual(readConfig(), {}, "Invalid discovery must not create credentials");
+      assert.equal(server.requests.some(r => r.url === "/oauth/v2/device_authorization"), false,
+        "Invalid issuer must fail before device registration");
+    } finally {
+      await server.close();
+      rmSync(home, { recursive: true, force: true });
+    }
+  }
+});
+
+test("OIDC device token with unsupported token_type is never sent as Bearer or persisted", async () => {
+  const home = withHome();
+  const server = await startDeviceAuthServer({
+    tokenResponses: [{ status: 200, body: {
+      access_token: "not-a-bearer-token", token_type: "DPoP", expires_in: 3600,
+    } }],
+  });
+  try {
+    const { interactiveLogin, readConfig } = loadAuth();
+    await assert.rejects(
+      interactiveLogin(server.apiUrl, testRuntime()),
+      /OIDC token endpoint returned malformed data/,
+    );
+    assert.deepEqual(readConfig(), {});
+    assert.equal(server.requests.some(r => r.url === "/api/auth/me"), false,
+      "Unsupported token type must not be sent to RP API");
+  } finally {
+    await server.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("expired CLI login rejects non-Bearer token refresh without overwriting stored credentials", async () => {
+  const home = withHome();
+  const server = await startDeviceAuthServer({ refreshResponse: {
+    status: 200, body: {
+      access_token: "not-a-bearer-refresh", token_type: "DPoP",
+      expires_in: 3600, refresh_token: "untrusted-rotated-refresh",
+    },
+  } });
+  try {
+    const { writeConfig, readConfig, resolveAuth } = loadAuth();
+    const config = { apiUrl: server.apiUrl, token: "expired-token", auth: {
+      mode: "device", issuer: server.apiUrl.slice(0, -4), clientId: "rp-cli-client",
+      tokenEndpoint: server.apiUrl.slice(0, -4) + "/oauth/v2/token",
+      expiresAt: "2000-01-01T00:00:00.000Z", refreshToken: "old-refresh",
+    } };
+    writeConfig(config);
+    await assert.rejects(
+      resolveAuth(server.apiUrl),
+      /OIDC token endpoint returned malformed data/,
+    );
+    assert.deepEqual(readConfig(), config);
+    assert.equal(server.requests.some(r => r.url === "/api/auth/me"), false);
   } finally {
     await server.close();
     rmSync(home, { recursive: true, force: true });
