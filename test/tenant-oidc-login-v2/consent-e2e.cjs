@@ -247,6 +247,63 @@ async function assertPending(discovery,clientId,code) {
     assert.equal(rejected.body.error,"access_denied",
       "Explicit Login V2 Deny did not reject device authorization");
     console.log("PASS: explicit Login V2 Deny rejects the original device code");
+
+    // Positive control on a *fresh* device code and this same authenticated
+    // browser. Missing Login Client permissions, broken consent UI or broken
+    // device token issuance MUST fail the test, not count as safe denial.
+    const positive=await deviceRequest(discovery,deviceClientId);
+    await assertPending(discovery,deviceClientId,positive.device_code);
+    await page.goto(positive.verification_uri_complete,{
+      waitUntil:"domcontentloaded",timeout:45000,
+    });
+    for(let attempt=0;attempt<40;attempt++){
+      const url=new URL(page.url());
+      assert.equal(url.origin,issuer);
+      if(url.pathname.includes("/ui/v2/login/device/consent"))break;
+      if(url.pathname.includes("/accounts")){
+        const account=page.getByText(username,{exact:false}).first();
+        if(await account.isVisible().catch(()=>false)){
+          await account.click();continue;
+        }
+        const continueButton=page.getByRole("button",{name:/continue/i}).first();
+        if(await continueButton.isVisible().catch(()=>false)){
+          await continueButton.click();continue;
+        }
+      }
+      await page.waitForTimeout(350);
+    }
+    assert.ok(new URL(page.url()).pathname.includes("/ui/v2/login/device/consent"),
+      "Second real Login V2 device consent page not reached");
+    const approve=page.getByRole("button",{name:/^allow$|^approve$/i}).first();
+    assert.ok(await approve.isVisible().catch(()=>false),
+      "Valid user cannot see the explicit Allow decision");
+    // One explicit UI click, never via API admin PAT; do not auto-approve.
+    await approve.click();
+    const interval=Math.min(30,Math.max(5,Math.ceil(Number(positive.interval) || 5)));
+    let approved;
+    for(let attempt=0;attempt<5;attempt++){
+      await page.waitForTimeout((interval+1)*1000);
+      const result=await deviceToken(discovery,deviceClientId,positive.device_code);
+      if(result.status===200){approved=result.body;break;}
+      assert.equal(result.status,400,
+        "Valid consent device exchange returned unexpected token HTTP status");
+      assert.ok(["authorization_pending","slow_down"].includes(result.body.error),
+        "Valid consent returned invalid OAuth state");
+    }
+    assert.ok(approved?.access_token && approved?.id_token,
+      "Real Login V2 Allow did not issue OAuth Device ID/access tokens");
+    assert.equal(approved.token_type?.toLowerCase(),"bearer");
+    const { createRemoteJWKSet,jwtVerify }=await import("jose");
+    const keyset=createRemoteJWKSet(new URL(discovery.jwks_uri));
+    const signedId=await jwtVerify(approved.id_token,keyset,{
+      issuer,audience:deviceClientId,
+    });
+    assert.equal(signedId.payload.sub,user.userId,
+      "Approved device ID token subject does not match the consented user");
+    const signedAccess=await jwtVerify(approved.access_token,keyset,{issuer});
+    assert.equal(signedAccess.payload.sub,user.userId);
+    console.log("PASS: explicit Login V2 Allow authorizes a fresh device code with signed ID/access JWT for the actual consented synthetic user");
+
   } finally {
     await context.close();await browser.close();
     await new Promise(resolve=>listener.close(resolve));
