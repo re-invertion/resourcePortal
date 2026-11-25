@@ -20,13 +20,21 @@ const server = https.createServer({
   if (!pathAndQuery.startsWith("/") || req.headers.host !== "localhost:8443") {
     res.writeHead(400); res.end(); return;
   }
-  const isLogin = pathAndQuery === "/ui/v2/login" ||
-    pathAndQuery.startsWith("/ui/v2/login/");
+  // The RFC8628 discovery verification_uri is always /device. With
+  // Login V2 required, passing /device to ZITADEL's Go legacy router still
+  // serves /ui/login/login (Login V1). Route the genuine issuer-provided
+  // device link to the actual separate Login V2 frontend, preserving the
+  // exact user_code query and same HTTPS origin. No auto-approval/submit.
+  const isDevice = pathAndQuery === "/device" ||
+    pathAndQuery.startsWith("/device?");
+  const forwardedPath = isDevice ? "/ui/v2/login" + pathAndQuery : pathAndQuery;
+  const isLogin = isDevice || forwardedPath === "/ui/v2/login" ||
+    forwardedPath.startsWith("/ui/v2/login/");
   const upstream = http.request({
     hostname: "127.0.0.1",
     port: isLogin ? 3000 : 8080,
     method: req.method,
-    path: pathAndQuery,
+    path: forwardedPath,
     headers: { ...req.headers, host: "localhost:8443",
       "x-forwarded-host": "localhost:8443",
       "x-forwarded-proto": "https" },
