@@ -230,9 +230,28 @@ async function run() {
   await prisma.tenantMembership.update({ where: { id: MA }, data: { status: "Suspended" } });
   await assert.rejects(() => resourceCall(a4.access_token, A), err => err.getStatus?.() === 403);
   await assert.rejects(() => refresh(clientA, a4.refresh_token), err => err.getStatus?.() === 403);
+  console.log("PASS suspended member cannot call MCP tools or refresh tokens");
+
+  // Prove the next denial is caused ONLY by tenant MCP disablement:
+  // the member, sso-login role, allow-list and grant must all be valid.
+  await prisma.tenantMembership.update({ where: { id: MA }, data: { status: "Active" } });
+  await settings.assertUserCanUseMcp(A, U);
+  assert.equal((await resourceCall(a4.access_token, A)).id, U);
+  const stillValidRefresh = await refresh(clientA, a4.refresh_token);
+  assert.equal(stillValidRefresh.code, 200);
+  assert.equal((await resourceCall(stillValidRefresh.body.access_token, A)).id, U);
   await prisma.tenantMcpSettings.update({ where: { tenantId: A }, data: { enabled: false } });
   await assert.rejects(() => settings.assertUserCanUseMcp(A, U), err => err.getStatus?.() === 403);
-  console.log("PASS membership suspension and tenant MCP disablement deny access");
+  await assert.rejects(
+    () => resourceCall(stillValidRefresh.body.access_token, A),
+    err => err.getStatus?.() === 403,
+  );
+  await assert.rejects(
+    () => refresh(clientA, stillValidRefresh.body.refresh_token),
+    err => err.getStatus?.() === 403,
+  );
+  assert.equal((await resourceCall(b1.access_token, B)).id, V);
+  console.log("PASS tenant MCP disablement alone denies previously valid member tool and refresh; B remains authorized");
 
   assert.equal(await prisma.tenant.count(), 2);
   assert.equal(await prisma.user.count(), 2);
