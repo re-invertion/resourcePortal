@@ -16,7 +16,14 @@ export class McpDcrClientVerifierService {
     const issuer = this.config.get<string>("OIDC_ISSUER_URL");
     if (!token || !issuer?.startsWith("https://")) return false;
 
-    const host = new URL(issuer).host;
+    let host: string;
+    try {
+      host = new URL(issuer).host;
+    } catch {
+      // Invalid issuer configuration must deny MCP client authorization, not
+      // escape as an unclassified exception from the signed Action endpoint.
+      return false;
+    }
     const base = (this.config.get<string>("ZITADEL_INTERNAL_URL") ?? "http://zitadel:8080").replace(/\/$/, "");
     const headers = {
       authorization: `Bearer ${token}`,
@@ -136,7 +143,10 @@ async function readBoundedBody(response: Response, maxBytes: number): Promise<st
       if (done) break;
       size += value.byteLength;
       if (size > maxBytes) {
-        await reader.cancel();
+        // A transport-owned stream may never settle cancel(). The bounded
+        // authorization decision must not wait for cancellation to finish.
+        // Attach rejection handling so cleanup cannot emit an unhandled error.
+        void reader.cancel().catch(() => undefined);
         return null;
       }
       chunks.push(decoder.decode(value, { stream: true }));
