@@ -145,10 +145,23 @@ async function assertPending(discovery,clientId,code) {
 async function advanceDeviceCodeEntry(page, code) {
   assert.equal(new URL(page.url()).pathname, "/ui/v2/login/device");
   assert.ok(code && /^[A-Za-z0-9-]+$/.test(code));
+  // The asynchronous Login V2 client may automatically navigate from
+  // device code entry to account selection before Playwright clicks. That
+  // transition is NOT consent: the outer loop must still reach consent,
+  // verify pending state and explicitly click Deny/Allow.
+  const movedToNextScreen = () => {
+    const uri = new URL(page.url());
+    assert.equal(uri.origin, issuer);
+    if (uri.pathname === "/ui/v2/login/device") return false;
+    assert.ok(uri.pathname.startsWith("/ui/v2/login/"),
+      "Device verification navigated outside the real Login V2 frontend");
+    return true;
+  };
   // Wait for the Next.js client component to hydrate. A field populated
   // from the verification_uri before hydration looks filled but its React
   // form state has not yet validated the code (Continue remains disabled).
   await page.waitForTimeout(750);
+  if (movedToNextScreen()) return;
   const entry = page.locator([
     'input[name*="code" i]',
     'input[id*="code" i]',
@@ -171,11 +184,13 @@ async function advanceDeviceCodeEntry(page, code) {
       for (let i=0;i<plain.length;i++) await digits.nth(i).fill(plain[i]);
     }
   }
+  if (movedToNextScreen()) return;
   const next = page.getByRole("button",{name:/^(continue|verify|next)$/i}).first();
   let enabled = false;
   // The provider validates a real user_code asynchronously; never force-click
   // a disabled control or count a static form as valid device authorization.
   for (let attempt=0;attempt<40;attempt++) {
+    if (movedToNextScreen()) return;
     const visible = await next.isVisible().catch(() => false);
     enabled = visible && await next.isEnabled().catch(() => false);
     if (enabled) break;
@@ -191,6 +206,7 @@ async function advanceDeviceCodeEntry(page, code) {
     throw Error("Login V2 device code entry has no enabled Continue; inputs shape: "+
       JSON.stringify(shape));
   }
+  if (movedToNextScreen()) return;
   await next.click({ timeout: 5_000 });
   // No consent decision here. The next loop explicitly requires the real
   // device consent screen and two separate Allow/Deny buttons.
