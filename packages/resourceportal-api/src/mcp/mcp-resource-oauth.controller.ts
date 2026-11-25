@@ -441,7 +441,7 @@ function renderMcpConsentPage(
     .notice{margin:0 0 24px;padding:14px 16px;background:#F4F7FB;border:1px solid #D7E0EC;border-radius:8px;color:#526070;font-size:13px;line-height:1.65}
     form{margin:0}
     .actions{display:flex;flex-wrap:wrap;gap:12px}
-    button{display:inline-flex;justify-content:center;align-items:center;min-height:44px;border-radius:6px;padding:10px 20px;font:600 14px/1.4 inherit;cursor:pointer;transition:background-color .15s,border-color .15s}
+    button{display:inline-flex;justify-content:center;align-items:center;min-height:44px;border-radius:6px;padding:10px 20px;font-family:inherit;font-size:14px;font-weight:600;line-height:1.4;cursor:pointer;transition:background-color .15s,border-color .15s}
     button:focus-visible{outline:2px solid #1769E0;outline-offset:3px}
     .allow{background:#1769E0;border:1px solid #1769E0;color:#fff}
     .allow:hover{background:#0f5fcf;border-color:#0f5fcf}
