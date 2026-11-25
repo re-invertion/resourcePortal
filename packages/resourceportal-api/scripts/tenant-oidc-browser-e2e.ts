@@ -22,6 +22,8 @@ export async function runOidcAuthorizationE2E(input: {
   skipLogout?: boolean;
   /** Negative assertion on the actual isolated HTTPS issuer, never production. */
   assertCodeReplayDenied?: boolean;
+  /** Visit the same unapproved device-code verification link with this signed-in browser. */
+  unapprovedDevice?: { verificationUri: string; assertStillPending: () => Promise<void> };
 }) {
   assert.equal(input.issuer, "https://localhost:8443");
   const discovery = await (await fetch(input.issuer + "/.well-known/openid-configuration")).json() as {
@@ -195,6 +197,36 @@ export async function runOidcAuthorizationE2E(input: {
       rotated.payload["urn:zitadel:iam:org:project:roles"];
     assert.ok(rotatedRole && JSON.stringify(rotatedRole).includes("rp.tenant.member"),
       "A valid grant was lost during refresh before revocation");
+    if (input.unapprovedDevice) {
+      // CVE-2026-119129 regression: just opening the verification link in a
+      // *genuinely signed-in* Chromium context must never finalize an OAuth
+      // device authorization without explicit, visible user consent.
+      assert.equal(process.env.GITHUB_ACTIONS, "true");
+      assert.equal(process.env.TENANT_OIDC_E2E_ISOLATED, "true");
+      const verification = new URL(input.unapprovedDevice.verificationUri);
+      assert.equal(verification.origin, input.issuer,
+        "Security: browser device check attempted to leave the test issuer");
+      assert.ok(verification.pathname.startsWith("/device"),
+        "Device verification URL does not resolve to the provider's login UI");
+      const cookies = await context.cookies(input.issuer);
+      assert.ok(cookies.length > 0,
+        "Signed-in OIDC browser does not have an issuer session cookie");
+
+      // Do NOT click Approve, Allow or any form submit. A successful GET is
+      // not consent. Never log the verification URI, user_code or cookies.
+      const landing = await page.goto(verification.toString(), {
+        waitUntil: "domcontentloaded", timeout: 30_000,
+      });
+      assert.ok(landing && landing.status() >= 200 && landing.status() < 400,
+        "Device verification page did not render in real Chromium");
+      assert.equal(new URL(page.url()).origin, input.issuer,
+        "Device verification unexpectedly redirected outside pinned issuer");
+      await page.waitForTimeout(1500);
+      await input.unapprovedDevice.assertStillPending();
+      await page.waitForTimeout(6500);
+      await input.unapprovedDevice.assertStillPending();
+      console.log("PASS: signed-in Chromium Device Authorization link needs explicit consent; no auto-approval or issued token");
+    }
     if (!input.skipLogout) {
       // RP-initiated sign-out must terminate the user-agent session and return
       // to a strictly preregistered post-logout URI. No raw ID token in the URL.
