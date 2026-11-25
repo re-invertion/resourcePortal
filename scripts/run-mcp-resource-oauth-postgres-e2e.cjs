@@ -113,7 +113,10 @@ async function seed() {
   const migrations = await prisma.$queryRawUnsafe(
     'SELECT COUNT(*)::int AS count FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL',
   );
-  assert.equal(migrations[0].count, 69, "All current migrations must apply");
+  const expectedMigrations = require("node:fs").readdirSync(
+    "packages/resourceportal-api/prisma/migrations", { withFileTypes: true },
+  ).filter(entry => entry.isDirectory()).length;
+  assert.equal(migrations[0].count, expectedMigrations, "All current migrations must apply");
   assert.equal(await prisma.tenant.count(), 0, "Test database must start empty");
   await prisma.user.createMany({ data: [userA, userB] });
   await prisma.tenant.createMany({ data: [
