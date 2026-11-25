@@ -136,6 +136,54 @@ async function assertPending(discovery,clientId,code) {
   assert.ok(!r.body.access_token&&!r.body.id_token&&!r.body.refresh_token,
     "SECURITY: OAuth tokens issued without explicit Login V2 device consent");
 }
+/**
+ * Advance ONLY the Login V2 Device *code-entry* form, not a consent UI.
+ * Verification URI may prefill the code before NextJS hydration; explicitly
+ * fill a real code input to synchronize React state and wait for an enabled
+ * Continue button. Never log user_code or manipulate Allow/Deny here.
+ */
+async function advanceDeviceCodeEntry(page, code) {
+  assert.equal(new URL(page.url()).pathname, "/ui/v2/login/device");
+  assert.ok(code && /^[A-Za-z0-9-]+$/.test(code));
+  const entry = page.locator([
+    'input[name*="code" i]',
+    'input[id*="code" i]',
+    'input[autocomplete="one-time-code"]',
+    'input[type="text"]',
+    'input:not([type])',
+  ].join(", ")).first();
+  if (await entry.count() && await entry.isVisible().catch(() => false)) {
+    // Some Login V2 versions prefill the code in HTML without hydrating the
+    // controlled React field. Replace, don't rely on untrusted prefill state.
+    await entry.fill("");
+    await entry.fill(code);
+    await entry.press("Tab");
+  } else {
+    // If the form is split into one-character inputs, enter only the actual
+    // synthetic code characters. All other layouts fail closed below.
+    const digits = page.locator('input[maxlength="1"]');
+    const plain = code.replace(/-/g, "");
+    if (await digits.count() === plain.length) {
+      for (let i=0;i<plain.length;i++) await digits.nth(i).fill(plain[i]);
+    }
+  }
+  const next = page.getByRole("button",{name:/^(continue|verify|next)$/i}).first();
+  const visible = await next.isVisible().catch(() => false);
+  const enabled = visible && await next.isEnabled().catch(() => false);
+  if (!enabled) {
+    const shape = await page.locator("input").evaluateAll(elements =>
+      elements.slice(0,12).map(e => ({
+        name:e.getAttribute("name"),type:e.getAttribute("type"),
+        id:e.getAttribute("id"),disabled:e.disabled,
+        length:e.value?.length??0,
+      })));
+    throw Error("Login V2 device code entry has no enabled Continue; inputs shape: "+
+      JSON.stringify(shape));
+  }
+  await next.click({ timeout: 5_000 });
+  // No consent decision here. The next loop explicitly requires the real
+  // device consent screen and two separate Allow/Deny buttons.
+}
 (async () => {
   const discoveryResponse=await fetch(issuer+"/.well-known/openid-configuration",{
     redirect:"error",signal:deadline(),
@@ -220,10 +268,7 @@ async function assertPending(discovery,clientId,code) {
       // pre-filled user_code, *before* any account selection/consent page.
       // Never click Allow here; only advance the code-entry state.
       if(current.pathname==="/ui/v2/login/device"){
-        const next=page.getByRole("button",{name:/^(continue|verify|next)$/i}).first();
-        if(await next.isVisible().catch(()=>false)){
-          await next.click();continue;
-        }
+        await advanceDeviceCodeEntry(page,request.user_code);continue;
       }
       if(current.pathname.includes("/accounts")){
         const account=page.getByText(username,{exact:false}).first();
@@ -270,10 +315,7 @@ async function assertPending(discovery,clientId,code) {
       assert.equal(url.origin,issuer);
       if(url.pathname.includes("/ui/v2/login/device/consent"))break;
       if(url.pathname==="/ui/v2/login/device"){
-        const next=page.getByRole("button",{name:/^(continue|verify|next)$/i}).first();
-        if(await next.isVisible().catch(()=>false)){
-          await next.click();continue;
-        }
+        await advanceDeviceCodeEntry(page,positive.user_code);continue;
       }
       if(url.pathname.includes("/accounts")){
         const account=page.getByText(username,{exact:false}).first();
