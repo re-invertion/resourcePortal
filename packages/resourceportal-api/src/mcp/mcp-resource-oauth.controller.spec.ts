@@ -297,6 +297,14 @@ describe("ResourcePortal MCP OAuth 2.1 issuer and tenant consent (#442)", () => 
     expect(html).toContain("Połącz ChatGPT");
     expect(html).toContain("Wybrany tenant");
     expect(html).toContain("Żądany zakres dostępu");
+    // Self-contained consent matches the ResourcePortal Web auth workspace.
+    expect(html).toContain('class="workspace"');
+    expect(html).toContain('class="aside"');
+    expect(html).toContain('src="/brand/resourceportal-wordmark-white-hq.png"');
+    expect(html).toContain('src="/brand/resourceportal-wordmark-hq.png"');
+    expect(html).toContain("@media(max-width:979px)");
+    expect(html).not.toContain("<script");
+
     expect(html).toContain("offline_access");
     expect(html).toContain('name="decision" value="approve"');
     expect(html).toContain('name="decision" value="deny"');
@@ -309,6 +317,9 @@ describe("ResourcePortal MCP OAuth 2.1 issuer and tenant consent (#442)", () => 
     const cssPolicy: unknown = r.header.mock.calls.find(([key]) => key === "content-security-policy")?.[1];
     expect(cssPolicy).toMatch(/style-src 'nonce-[a-zA-Z0-9+/=]{24}'/);
     expect(cssPolicy).toContain("form-action 'self' https://chatgpt.com");
+    expect(cssPolicy).toContain("img-src 'self'");
+    expect(cssPolicy).not.toContain("unsafe-inline");
+
     expect(cssPolicy).not.toContain("form-action *");
     expect(html).toContain('style nonce="');
     expect(html).not.toContain("https://cdn.");
