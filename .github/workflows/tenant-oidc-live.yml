@@ -11,6 +11,11 @@ on:
       - 'packages/resourceportal-api/scripts/tenant-oidc-actions-v2-proof.spec.ts'
       - 'packages/resourceportal-api/prisma/**'
       - 'scripts/run-tenant-oidc-https-e2e.sh'
+      - 'scripts/run-mcp-resource-oauth-postgres-e2e.cjs'
+      - 'packages/resourceportal-api/src/auth/mcp-resource-oauth.service.ts'
+      - 'packages/resourceportal-api/src/mcp/**'
+      - 'packages/resourceportal-api/src/auth/tenant-context.guard.ts'
+      - 'packages/resourceportal-api/src/auth/permissions.guard.ts'
       - 'test/tenant-oidc/**'
       - 'test/federation/**'
       - 'package-lock.json'
@@ -61,3 +66,48 @@ jobs:
         run: |
           ! grep -Rq '^TENANT_OIDC_ACTIVATION_ALLOWED=true' .env 2>/dev/null || exit 1
           ! grep -Rq '^RP_NATIVE_LOGIN_ONLY=true' .env 2>/dev/null || exit 1
+
+  isolated-mcp-resource-oauth-postgres:
+    name: Real PostgreSQL MCP OAuth revocation, tenant isolation and RBAC
+    # Independent disposable Postgres service on a GitHub-hosted runner.
+    # No sandbox/prod database, OAuth secrets, external IdP or active sessions.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      RP_MCP_POSTGRES_E2E_ISOLATED: 'true'
+      PUBLIC_API_URL: https://rp532.synthetic.test
+      RP_MCP_RESOURCE_OAUTH_ENABLED: 'true'
+      DATABASE_URL: postgresql://rp532test:rp532-ci-only@localhost:55433/rp532_mcp_test?schema=public
+    services:
+      pg:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_USER: rp532test
+          POSTGRES_PASSWORD: rp532-ci-only
+          POSTGRES_DB: rp532_mcp_test
+        ports:
+          - 55433:5432
+        options: >-
+          --health-cmd "pg_isready -U rp532test -d rp532_mcp_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install exact dependencies, generate Prisma and compile actual API
+        run: |
+          npm ci --no-audit --no-fund
+          npm run api:prisma:generate
+          npm run build --workspace @resource-portal/help
+          npm run build --workspace @resource-portal/sdk
+          npm run build --workspace @resource-portal/api
+      - name: Apply real Prisma migrations in disposable PostgreSQL
+        run: npx prisma migrate deploy --schema packages/resourceportal-api/prisma/schema.prisma
+      - name: Verify actual database-backed OAuth, RBAC and revocation
+        run: node scripts/run-mcp-resource-oauth-postgres-e2e.cjs
