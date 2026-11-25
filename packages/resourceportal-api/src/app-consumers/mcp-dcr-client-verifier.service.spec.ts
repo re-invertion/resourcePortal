@@ -219,6 +219,42 @@ describe("ChatGPT MCP DCR issuance proof (#442)", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("fails closed on a syntactically invalid HTTPS issuer before any bearer transport", async () => {
+    const invalid = { get: vi.fn((name: string) => ({
+      ZITADEL_MANAGEMENT_TOKEN: "management-token",
+      ZITADEL_INTERNAL_URL: "http://zitadel:8080",
+      OIDC_ISSUER_URL: "https://",
+    })[name as "ZITADEL_MANAGEMENT_TOKEN" | "ZITADEL_INTERNAL_URL" | "OIDC_ISSUER_URL"]) }
+      as unknown as ConfigService;
+    const fetchMock = vi.fn();
+    global.fetch = fetchMock as typeof fetch;
+    await expect(new McpDcrClientVerifierService(invalid)
+      .isTrustedChatGptClient("registered-chatgpt-client")).resolves.toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("denies an oversized streaming response even if transport cancellation never settles", async () => {
+    let cancelCalled = false;
+    const oversized = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(512_001));
+      },
+      cancel() {
+        cancelCalled = true;
+        // Model a transport that never acknowledges cancellation.
+        return new Promise<void>(() => undefined);
+      },
+    });
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(oversized, {
+      status: 200, headers: { "content-type": "application/json" },
+    }));
+    global.fetch = fetchMock as typeof fetch;
+    await expect(new McpDcrClientVerifierService(config)
+      .isTrustedChatGptClient("registered-chatgpt-client")).resolves.toBe(false);
+    expect(cancelCalled).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("fails closed when ZITADEL app/project discovery fails or is unavailable", async () => {
     global.fetch = vi.fn().mockResolvedValue(new Response("error", { status: 503 })) as typeof fetch;
     await expect(new McpDcrClientVerifierService(config)
