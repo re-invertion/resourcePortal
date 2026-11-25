@@ -38,7 +38,7 @@ chmod 644 var/federation/zitadel/tls/issuer.crt
 chmod 600 var/federation/zitadel/tls/issuer.key
 
 export NODE_EXTRA_CA_CERTS="$root/var/federation/zitadel/tls/issuer.crt"
-export ZITADEL_VERSION=v4.17.0
+export ZITADEL_VERSION=v4.19.5
 "${compose[@]}" up -d rp-postgres zitadel-postgres zitadel
 ok=false
 for ((attempt=0; attempt<120; attempt++)); do
