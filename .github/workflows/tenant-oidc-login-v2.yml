@@ -1,0 +1,35 @@
+name: ResourcePortal Isolated ZITADEL Login V2 Preflight
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tenant-oidc-login-v2.yml'
+      - 'test/tenant-oidc-login-v2/**'
+      - 'scripts/tenant-oidc-login-v2-proxy.cjs'
+      - 'scripts/run-tenant-oidc-login-v2-e2e.sh'
+      - 'test/federation/zitadel-config.yaml'
+      - 'test/federation/zitadel-init-steps.yaml'
+      - 'test/federation/docker-compose.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  login-v2-disposable:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      RP_LOGIN_V2_E2E_ISOLATED: 'true'
+      ZITADEL_VERSION: v4.19.5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test real patched ZITADEL Login V2 frontend routing on isolated Docker and Postgres
+        shell: bash
+        run: bash scripts/run-tenant-oidc-login-v2-e2e.sh
