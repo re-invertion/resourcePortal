@@ -216,6 +216,15 @@ async function assertPending(discovery,clientId,code) {
       const current=new URL(page.url());
       assert.equal(current.origin,issuer);
       if(current.pathname.includes("/device/consent"))break;
+      // The actual Login V2 /device page requires Continue to submit the
+      // pre-filled user_code, *before* any account selection/consent page.
+      // Never click Allow here; only advance the code-entry state.
+      if(current.pathname==="/ui/v2/login/device"){
+        const next=page.getByRole("button",{name:/^(continue|verify|next)$/i}).first();
+        if(await next.isVisible().catch(()=>false)){
+          await next.click();continue;
+        }
+      }
       if(current.pathname.includes("/accounts")){
         const account=page.getByText(username,{exact:false}).first();
         if(await account.isVisible().catch(()=>false)){
@@ -260,6 +269,12 @@ async function assertPending(discovery,clientId,code) {
       const url=new URL(page.url());
       assert.equal(url.origin,issuer);
       if(url.pathname.includes("/ui/v2/login/device/consent"))break;
+      if(url.pathname==="/ui/v2/login/device"){
+        const next=page.getByRole("button",{name:/^(continue|verify|next)$/i}).first();
+        if(await next.isVisible().catch(()=>false)){
+          await next.click();continue;
+        }
+      }
       if(url.pathname.includes("/accounts")){
         const account=page.getByText(username,{exact:false}).first();
         if(await account.isVisible().catch(()=>false)){
