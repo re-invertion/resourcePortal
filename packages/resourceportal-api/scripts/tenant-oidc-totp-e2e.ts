@@ -106,5 +106,62 @@ export async function proveIsolatedTotpMfa(input: {
   assert.ok(!denied.session?.factors?.totp?.verifiedAt,
     "Invalid TOTP incorrectly verified the second factor");
 
-  console.log("PASS: isolated real ZITADEL TOTP registration, password+TOTP session factors, invalid-code denial (no secrets logged)");
+
+  // Recovery codes belong to an already authenticated *synthetic* user.
+  // Use the real user-session bearer (not the management PAT) to request
+  // codes, and never print codes, secrets or opaque session tokens.
+  const recovered = await fetch(
+    "https://localhost:8443" + root + "/recovery_codes", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer " + successful.sessionToken,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ count: 3 }),
+      signal: AbortSignal.timeout(20_000),
+    },
+  );
+  if (!recovered.ok) {
+    throw new Error("Isolated ZITADEL recovery code generation returned HTTP " + recovered.status);
+  }
+  const codes = await recovered.json() as { recoveryCodes?: string[] };
+  assert.ok(Array.isArray(codes.recoveryCodes) &&
+    codes.recoveryCodes.length >= 1 && codes.recoveryCodes.every(
+      code => typeof code === "string" && code.length > 5,
+    ), "ZITADEL did not return valid single-use synthetic recovery codes");
+  const firstCode = codes.recoveryCodes[0];
+
+  const recoverySession = await createSession();
+  const recoveredFactor = await input.api<{ sessionToken?: string }>(
+    "PATCH", recoverySession, { checks: { recoveryCode: { code: firstCode } } },
+  );
+  assert.ok(recoveredFactor.sessionToken, "Recovery code was not accepted by a real session");
+  const verifiedRecovery = await input.api<{ session?: { factors?: {
+    user?: { id?: string }; password?: { verifiedAt?: string };
+    recoveryCode?: { verifiedAt?: string };
+  } } }>("GET", recoverySession);
+  assert.equal(verifiedRecovery.session?.factors?.user?.id, input.userId);
+  assert.ok(verifiedRecovery.session?.factors?.password?.verifiedAt);
+  assert.ok(verifiedRecovery.session?.factors?.recoveryCode?.verifiedAt,
+    "Real ZITADEL session did not record recovery factor");
+
+  // Reusing the exact consumed code with an otherwise valid password
+  // must fail closed. A rejection is insufficient if another check was
+  // already failing, so require valid user + password before replay.
+  const replaySession = await createSession();
+  await assert.rejects(
+    () => input.api("PATCH", replaySession, {
+      checks: { recoveryCode: { code: firstCode } },
+    }),
+    /returned HTTP 4\d\d/,
+    "ZITADEL accepted a consumed single-use recovery code",
+  );
+  const rejectedReplay = await input.api<{ session?: { factors?: {
+    recoveryCode?: { verifiedAt?: string }; password?: { verifiedAt?: string };
+  } } }>("GET", replaySession);
+  assert.ok(rejectedReplay.session?.factors?.password?.verifiedAt);
+  assert.ok(!rejectedReplay.session?.factors?.recoveryCode?.verifiedAt);
+
+  console.log("PASS: isolated real ZITADEL password+TOTP and single-use recovery code, denied TOTP and consumed-code replay (no secrets logged)");
+
 }
