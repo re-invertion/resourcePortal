@@ -13,6 +13,9 @@ cleanup() {
     "${compose[@]}" logs --no-color --tail 25 zitadel >&2 || true
   fi
   "${compose[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
+  # The special IAM_LOGIN_CLIENT PAT exists only in this disposable
+  # GitHub runner; never leave it in a CI workspace after teardown.
+  rm -f var/federation/zitadel/login-client.pat
   rm -f .env
   exit "$exit_code"
 }
@@ -85,6 +88,11 @@ source "$root/.env"
 set +a
 export TENANT_OIDC_E2E_ISOLATED=true
 export ZITADEL_MANAGEMENT_TOKEN="$(tr -d '\r\n' <"$root/var/federation/zitadel/admin.pat")"
+export ZITADEL_LOGIN_CLIENT_PAT_FILE="$root/var/federation/zitadel/login-client.pat"
+test -s "$ZITADEL_LOGIN_CLIENT_PAT_FILE" || {
+  echo "Isolated ZITADEL setup did not produce the IAM_LOGIN_CLIENT test PAT" >&2
+  exit 1
+}
 
 # Provision DCR only on the disposable GitHub-hosted test issuer. The real
 # MCP registration proof sends an anonymous RFC 7591 request, so this
