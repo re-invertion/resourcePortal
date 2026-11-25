@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } = require("node:fs");
+const { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, chmodSync, symlinkSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join } = require("node:path");
 
@@ -59,6 +59,59 @@ test("reads legacy config and writes device auth metadata compatibly", () => {
   assert.equal(stored.auth.mode, "device");
   assert.equal(readConfig().auth.clientId, "cli-client");
   rmSync(home, { recursive: true, force: true });
+});
+
+test("CLI token/refresh persistence makes legacy world-readable credentials private without temporary leaks", {
+  skip: process.platform === "win32",
+}, () => {
+  const home = withHome();
+  try {
+    const { writeConfig, readConfig, configPath } = loadAuth();
+    const directory = join(home, ".resourceportal");
+    mkdirSync(directory, { mode: 0o755 });
+    writeFileSync(configPath(), JSON.stringify({
+      apiUrl: "https://rp.example/api", token: "old-refresh-secret",
+    }), { mode: 0o644 });
+    chmodSync(directory, 0o755);
+    chmodSync(configPath(), 0o644);
+    assert.equal(statSync(configPath()).mode & 0o777, 0o644);
+    writeConfig({
+      apiUrl: "https://rp.example/api",
+      token: "new-private-access",
+      auth: { mode: "device", issuer: "https://idp.example",
+        clientId: "public-client", tokenEndpoint: "https://idp.example/token",
+        refreshToken: "new-private-refresh" },
+    });
+    assert.equal(statSync(directory).mode & 0o777, 0o700);
+    assert.equal(statSync(configPath()).mode & 0o777, 0o600);
+    assert.equal(readConfig().auth.refreshToken, "new-private-refresh");
+    assert.deepEqual(readdirSync(directory), ["config.json"],
+      "Atomic temporary credentials must not be left on disk");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("CLI token write atomically replaces a preexisting config symlink without following it", {
+  skip: process.platform === "win32",
+}, () => {
+  const home = withHome();
+  try {
+    const { writeConfig, readConfig, configPath } = loadAuth();
+    const directory = join(home, ".resourceportal");
+    mkdirSync(directory, { mode: 0o700 });
+    const victim = join(home, "unrelated-owner-file.txt");
+    writeFileSync(victim, "unrelated-content", { mode: 0o600 });
+    symlinkSync(victim, configPath());
+    writeConfig({ apiUrl: "https://rp.example/api", token: "new-private-token" });
+    assert.equal(readFileSync(victim, "utf8"), "unrelated-content",
+      "A preexisting symlink must not redirect token writes");
+    assert.equal(statSync(configPath()).mode & 0o777, 0o600);
+    assert.equal(readConfig().token, "new-private-token");
+    assert.deepEqual(readdirSync(directory), ["config.json"]);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test("environment token overrides development and stored credentials", async () => {
