@@ -1,13 +1,6 @@
 name: Installer + Identity Federation
 
 on:
-  # Supplemental isolated regression for changes to the real federation
-  # browser harness. Required merge-queue workflow_call remains unchanged.
-  pull_request:
-    paths:
-      - '.github/workflows/federation-integration.yml'
-      - 'test/federation/**'
-      - 'scripts/run-federation-e2e.sh'
   workflow_call:
     inputs:
       force_gate:
@@ -22,9 +15,7 @@ permissions:
 
 jobs:
   federation-e2e:
-    # Do not run write-capable PR jobs from forks. Existing required caller
-    # with force_gate=true remains the authoritative release-readiness gate.
-    if: inputs.force_gate == true || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+    if: inputs.force_gate == true || github.event_name == 'workflow_dispatch'
     # Playwright 1.63 dependency package names are not available on Ubuntu 26.04;
     # pin the browser integration runner to a supported distro instead of
     # bypassing browser dependency installation or skipping the live gate.
