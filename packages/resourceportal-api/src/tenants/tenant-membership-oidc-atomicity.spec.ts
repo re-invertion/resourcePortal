@@ -132,9 +132,9 @@ function setupSelfMember(owner = false, status = MembershipStatus.Active) {
     appGrants: [{ oauthApplicationId: selfOAuthId, enabled: true }],
     nativeAppGrants: [{ clientKey: "web", enabled: true }],
   };
-  f.prisma.tenantMembership.findFirst.mockResolvedValue(owned as never);
-  f.tx.tenantMembership.findFirst.mockResolvedValue(owned as never);
-  f.tx.tenantMembership.update.mockResolvedValue(owned as never);
+  f.prisma.tenantMembership.findFirst.mockResolvedValue(owned);
+  f.tx.tenantMembership.findFirst.mockResolvedValue(owned);
+  f.tx.tenantMembership.update.mockResolvedValue(owned);
   Object.assign(f.prisma.tenantMembership, {
     findUnique: vi.fn().mockResolvedValue({
       status: owned.status,
@@ -168,21 +168,19 @@ describe("tenant membership self-management permission boundary", () => {
     expect(f.nativeGrants.upsert).toHaveBeenCalledWith(expect.objectContaining({
       where: { membershipId_clientKey: { membershipId, clientKey: "cli" } },
     }));
-    expect(f.tx.auditLogEntry.create).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({
-        actor: userId, action: "membership.update", resourceId: membershipId,
-      }),
-    }));
+    expect(f.tx.auditLogEntry.create.mock.calls[0]?.[0]).toMatchObject({
+      data: { actor: userId, action: "membership.update", resourceId: membershipId },
+    });
   });
 
   it("permits a non-Owner to revoke their own existing grants or reduce direct roles", async () => {
     const f = setupSelfMember();
     await f.service.updateMembership(tenantId, membershipId,
       { roleIds: [], oauthApplicationIds: [], nativeApplicationKeys: [] }, f.selfActor);
-    expect(f.oauthGrants.updateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ membershipId, tenantId, enabled: true }),
+    expect(f.oauthGrants.updateMany.mock.calls[0]?.[0]).toMatchObject({
+      where: { membershipId, tenantId, enabled: true },
       data: { enabled: false, updatedBy: userId },
-    }));
+    });
     expect(f.nativeGrants.updateMany).toHaveBeenCalled();
     expect(f.tx.membershipRole.deleteMany).toHaveBeenCalledWith({
       where: { membershipId },
@@ -233,7 +231,7 @@ describe("tenant membership self-management permission boundary", () => {
       ...f.owned,
       roles: [{ roleId: "tenant-owner", role: { id: "tenant-owner", name: "Owner", permissions: ["*"] } }],
     };
-    f.prisma.tenantMembership.findFirst.mockResolvedValue(earlierOwner as never);
+    f.prisma.tenantMembership.findFirst.mockResolvedValue(earlierOwner);
     Object.assign(f.prisma.tenantMembership, {
       findUnique: vi.fn().mockResolvedValue({
         status: MembershipStatus.Active, roles: [{ roleId: "tenant-owner" }],
