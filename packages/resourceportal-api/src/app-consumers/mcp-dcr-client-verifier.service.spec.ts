@@ -220,9 +220,13 @@ describe("ChatGPT MCP DCR issuance proof (#442)", () => {
   });
 
   it("fails closed on a syntactically invalid HTTPS issuer before any bearer transport", async () => {
+    const env: Record<string, string> = {
+      ZITADEL_MANAGEMENT_TOKEN: "management-token",
+      ZITADEL_INTERNAL_URL: "http://zitadel:8080",
+      OIDC_ISSUER_URL: "https://",
+    };
     const invalid = {
-      get: vi.fn((name: string) =>
-        name === "OIDC_ISSUER_URL" ? "https://" : config.get(name)),
+      get: vi.fn((name: string) => env[name]),
     } as unknown as ConfigService;
     const fetchMock = vi.fn();
     global.fetch = fetchMock as typeof fetch;
