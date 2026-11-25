@@ -27,14 +27,27 @@ const server = https.createServer({
   // exact user_code query and same HTTPS origin. No auto-approval/submit.
   const isDevice = pathAndQuery === "/device" ||
     pathAndQuery.startsWith("/device?");
-  const forwardedPath = isDevice ? "/ui/v2/login" + pathAndQuery : pathAndQuery;
-  const isLogin = isDevice || forwardedPath === "/ui/v2/login" ||
-    forwardedPath.startsWith("/ui/v2/login/");
+  if (isDevice) {
+    // Next.js must SEE /ui/v2/login/device as its browser URL. Proxying the
+    // response body while keeping /device in the address bar fails its
+    // App Router state. Only GET is redirected; never auto-submit consent.
+    if (req.method !== "GET") {
+      res.writeHead(405, { allow: "GET" }); res.end(); return;
+    }
+    res.writeHead(302, {
+      location: "/ui/v2/login" + pathAndQuery,
+      "cache-control": "no-store",
+    });
+    res.end();
+    return;
+  }
+  const isLogin = pathAndQuery === "/ui/v2/login" ||
+    pathAndQuery.startsWith("/ui/v2/login/");
   const upstream = http.request({
     hostname: "127.0.0.1",
     port: isLogin ? 3000 : 8080,
     method: req.method,
-    path: forwardedPath,
+    path: pathAndQuery,
     headers: { ...req.headers, host: "localhost:8443",
       "x-forwarded-host": "localhost:8443",
       "x-forwarded-proto": "https" },
