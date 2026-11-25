@@ -30,6 +30,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Test real patched ZITADEL Login V2 frontend routing on isolated Docker and Postgres
+      - name: Install exact Playwright dependencies
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+      - name: Run real Login V2 browser PKCE and explicit device consent regression
         shell: bash
         run: bash scripts/run-tenant-oidc-login-v2-e2e.sh

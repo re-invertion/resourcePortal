@@ -65,3 +65,4 @@ done
   echo 'Real Login V2 container unavailable behind HTTPS router' >&2; exit 1;
 }
 node test/tenant-oidc-login-v2/smoke.cjs
+node test/tenant-oidc-login-v2/consent-e2e.cjs
