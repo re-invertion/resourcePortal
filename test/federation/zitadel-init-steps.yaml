@@ -1,6 +1,15 @@
 FirstInstance:
   PatPath: /bootstrap/admin.pat
+  # CI-only least-privileged Login V2 API backend client for real device
+  # project-grant enforcement. Never use this PAT outside disposable CI.
+  LoginClientPatPath: /bootstrap/login-client.pat
   Org:
+    LoginClient:
+      Machine:
+        Username: isolated-login-client
+        Name: Disposable Login API Integration
+      Pat:
+        ExpirationDate: "2040-01-01T00:00:00Z"
     Human:
       Username: root
       Password: RootPassword1!
