@@ -128,9 +128,9 @@ test("live candidate and published ZITADEL must boot real eventstore before sign
   assert.match(publication, /ZITADEL_REF="\$\(jq -er '.candidateZitadelImage'/);
   assert.match(publication, /docker pull "\$ZITADEL_REF"/);
   assert.match(runtime, /\.Config.Image/);
-  assert.match(readiness, /RP_ROLLBACK_CANDIDATE_ZITADEL_IMAGE: ghcr.io\/zitadel\/zitadel:v4\.17\.0/);
-  assert.match(publication, /ghcr.io\/zitadel\/zitadel:v4\.17\.0/);
-  assert.match(publication, /RP_ROLLBACK_CANDIDATE_ZITADEL_IMAGE: ghcr.io\/zitadel\/zitadel:v4\.17\.0/);
+  assert.match(readiness, /RP_ROLLBACK_CANDIDATE_ZITADEL_IMAGE: ghcr.io\/zitadel\/zitadel:v4\.19\.5/);
+  assert.match(publication, /ghcr.io\/zitadel\/zitadel:v4\.19\.5/);
+  assert.match(publication, /RP_ROLLBACK_CANDIDATE_ZITADEL_IMAGE: ghcr.io\/zitadel\/zitadel:v4\.19\.5/);
   assert.match(policy, /evidence\.zitadelSourceRuntimeReadyAfterRollback === true/);
   assert.match(policy, /evidence\.zitadelSourceEventstoreVerified === true/);
   assert.match(policy, /evidence\.candidateZitadelRuntimeReadyBeforeRollback === true/);
