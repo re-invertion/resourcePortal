@@ -118,3 +118,142 @@ describe("tenant membership OIDC invalidation is atomic with membership writes",
       .toBeLessThan(f.tx.auditLogEntry.create.mock.invocationCallOrder[0]);
   });
 });
+
+const selfOAuthId = "44444444-4444-4444-8444-444444444444";
+
+function setupSelfMember(owner = false, status = MembershipStatus.Active) {
+  const f = setup();
+  const owned = {
+    ...member,
+    status,
+    roles: owner
+      ? [{ roleId: "tenant-owner", role: { id: "tenant-owner", name: "Owner", permissions: ["*"] } }]
+      : member.roles,
+    appGrants: [{ oauthApplicationId: selfOAuthId, enabled: true }],
+    nativeAppGrants: [{ clientKey: "web", enabled: true }],
+  };
+  f.prisma.tenantMembership.findFirst.mockResolvedValue(owned as never);
+  f.tx.tenantMembership.findFirst.mockResolvedValue(owned as never);
+  f.tx.tenantMembership.update.mockResolvedValue(owned as never);
+  Object.assign(f.prisma.tenantMembership, {
+    findUnique: vi.fn().mockResolvedValue({
+      status: owned.status,
+      roles: owned.roles.map(({ roleId }) => ({ roleId })),
+    }),
+  });
+  const oauthGrants = {
+    updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    upsert: vi.fn().mockResolvedValue({}),
+  };
+  const nativeGrants = {
+    updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    upsert: vi.fn().mockResolvedValue({}),
+  };
+  Object.assign(f.tx, {
+    tenantAppClientGrant: oauthGrants,
+    tenantNativeAppGrant: nativeGrants,
+  });
+  return {
+    ...f, owned, oauthGrants, nativeGrants,
+    selfActor: { ...actor, id: userId },
+  };
+}
+
+describe("tenant membership self-management permission boundary", () => {
+  it("lets an active Owner manage their own native application grants with an audit", async () => {
+    const f = setupSelfMember(true);
+    await f.service.updateMembership(tenantId, membershipId,
+      { nativeApplicationKeys: ["web", "cli"] }, f.selfActor);
+    expect(f.nativeGrants.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { membershipId_clientKey: { membershipId, clientKey: "cli" } },
+    }));
+    expect(f.tx.auditLogEntry.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        actor: userId, action: "membership.update", resourceId: membershipId,
+      }),
+    }));
+  });
+
+  it("permits a non-Owner to revoke their own existing grants or reduce direct roles", async () => {
+    const f = setupSelfMember();
+    await f.service.updateMembership(tenantId, membershipId,
+      { roleIds: [], oauthApplicationIds: [], nativeApplicationKeys: [] }, f.selfActor);
+    expect(f.oauthGrants.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ membershipId, tenantId, enabled: true }),
+      data: { enabled: false, updatedBy: userId },
+    }));
+    expect(f.nativeGrants.updateMany).toHaveBeenCalled();
+    expect(f.tx.membershipRole.deleteMany).toHaveBeenCalledWith({
+      where: { membershipId },
+    });
+    expect(f.tx.auditLogEntry.create).toHaveBeenCalledOnce();
+  });
+
+  it("rejects self-enabling a new RP client grant with no write", async () => {
+    const f = setupSelfMember();
+    await expect(f.service.updateMembership(tenantId, membershipId,
+      { nativeApplicationKeys: ["web", "cli"] }, f.selfActor))
+      .rejects.toThrow("You cannot grant yourself additional roles");
+    expect(f.nativeGrants.upsert).not.toHaveBeenCalled();
+    expect(f.tx.tenantMembership.update).not.toHaveBeenCalled();
+    expect(f.tx.auditLogEntry.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects self-granting a new tenant OAuth application with no write", async () => {
+    const f = setupSelfMember();
+    await expect(f.service.updateMembership(tenantId, membershipId,
+      { oauthApplicationIds: ["55555555-5555-4555-8555-555555555555"] }, f.selfActor))
+      .rejects.toThrow("You cannot grant yourself additional roles");
+    expect(f.oauthGrants.upsert).not.toHaveBeenCalled();
+    expect(f.tx.tenantMembership.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects self-promotion to a new role even with membership.update", async () => {
+    const f = setupSelfMember();
+    f.prisma.role.findMany.mockResolvedValue([{ id: roleId }, { id: "tenant-admin" }] as never);
+    await expect(f.service.updateMembership(tenantId, membershipId,
+      { roleIds: [roleId, "tenant-admin"] }, f.selfActor))
+      .rejects.toThrow("You cannot grant yourself additional roles");
+    expect(f.tx.membershipRole.deleteMany).not.toHaveBeenCalled();
+    expect(f.tx.auditLogEntry.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects self-reactivation of a suspended member", async () => {
+    const f = setupSelfMember(false, MembershipStatus.Suspended);
+    await expect(f.service.updateMembership(tenantId, membershipId,
+      { status: MembershipStatus.Active }, f.selfActor))
+      .rejects.toThrow("You cannot grant yourself additional roles");
+    expect(f.tx.tenantMembership.update).not.toHaveBeenCalled();
+  });
+
+  it("checks the tenant-locked membership rather than an earlier Owner snapshot", async () => {
+    const f = setupSelfMember();
+    const earlierOwner = {
+      ...f.owned,
+      roles: [{ roleId: "tenant-owner", role: { id: "tenant-owner", name: "Owner", permissions: ["*"] } }],
+    };
+    f.prisma.tenantMembership.findFirst.mockResolvedValue(earlierOwner as never);
+    Object.assign(f.prisma.tenantMembership, {
+      findUnique: vi.fn().mockResolvedValue({
+        status: MembershipStatus.Active, roles: [{ roleId: "tenant-owner" }],
+      }),
+    });
+    await expect(f.service.updateMembership(tenantId, membershipId,
+      { nativeApplicationKeys: ["web", "cli"] }, f.selfActor))
+      .rejects.toThrow("You cannot grant yourself additional roles");
+    expect(f.nativeGrants.upsert).not.toHaveBeenCalled();
+    expect(f.tx.auditLogEntry.create).not.toHaveBeenCalled();
+  });
+
+  it("preserves the last active Owner when self-suspending", async () => {
+    const f = setupSelfMember(true);
+    Object.assign(f.tx.tenantMembership, {
+      count: vi.fn().mockResolvedValue(0),
+    });
+    await expect(f.service.updateMembership(tenantId, membershipId,
+      { status: MembershipStatus.Suspended }, f.selfActor))
+      .rejects.toThrow("TenantLastOwner");
+    expect(f.tx.tenantMembership.update).not.toHaveBeenCalled();
+    expect(f.tx.auditLogEntry.create).not.toHaveBeenCalled();
+  });
+});
