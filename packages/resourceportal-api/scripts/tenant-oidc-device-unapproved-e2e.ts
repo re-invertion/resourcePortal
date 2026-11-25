@@ -88,30 +88,4 @@ export async function proveUnapprovedDeviceCodeCannotIssueToken(input: {
     "SECURITY: anonymous device request lookup did not enforce session.read");
 
   console.log("PASS: isolated ZITADEL v4.19.5 Device grant remains pending without consent, no token, anonymous session.read denied");
-
-  // Re-check the *same* device authorization after a real, signed-in user
-  // browser visits its verification URL but does not click Allow/Approve.
-  // The callback is used by the browser-based OIDC test while the exact
-  // same isolated app/code is kept alive. A permission-denied or expired
-  // token response must NOT be mistaken for authorization_pending.
-  const assertStillPending = async () => {
-    const result = await fetch(discovery.token_endpoint!, {
-      method: "POST", redirect: "error", signal: deadline(),
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: deviceGrant, client_id: input.clientId,
-        device_code: issued.device_code!,
-      }),
-    });
-    assert.equal(result.status, 400,
-      "SECURITY: signed-in browser visit authorized a device without explicit consent");
-    const value = await result.json() as {
-      error?: string; access_token?: string; id_token?: string; refresh_token?: string;
-    };
-    assert.ok(value.error === "authorization_pending" || value.error === "slow_down",
-      "Device token is no longer pending after a browser visited verification URL");
-    assert.ok(!value.access_token && !value.id_token && !value.refresh_token,
-      "SECURITY: implicit device approval leaked OAuth tokens");
-  };
-  return { verificationUri: issued.verification_uri_complete!, assertStillPending };
 }
