@@ -145,6 +145,10 @@ async function assertPending(discovery,clientId,code) {
 async function advanceDeviceCodeEntry(page, code) {
   assert.equal(new URL(page.url()).pathname, "/ui/v2/login/device");
   assert.ok(code && /^[A-Za-z0-9-]+$/.test(code));
+  // Wait for the Next.js client component to hydrate. A field populated
+  // from the verification_uri before hydration looks filled but its React
+  // form state has not yet validated the code (Continue remains disabled).
+  await page.waitForTimeout(750);
   const entry = page.locator([
     'input[name*="code" i]',
     'input[id*="code" i]',
@@ -168,8 +172,15 @@ async function advanceDeviceCodeEntry(page, code) {
     }
   }
   const next = page.getByRole("button",{name:/^(continue|verify|next)$/i}).first();
-  const visible = await next.isVisible().catch(() => false);
-  const enabled = visible && await next.isEnabled().catch(() => false);
+  let enabled = false;
+  // The provider validates a real user_code asynchronously; never force-click
+  // a disabled control or count a static form as valid device authorization.
+  for (let attempt=0;attempt<40;attempt++) {
+    const visible = await next.isVisible().catch(() => false);
+    enabled = visible && await next.isEnabled().catch(() => false);
+    if (enabled) break;
+    await page.waitForTimeout(250);
+  }
   if (!enabled) {
     const shape = await page.locator("input").evaluateAll(elements =>
       elements.slice(0,12).map(e => ({
