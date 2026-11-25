@@ -609,20 +609,11 @@ async function main() {
     assert.ok(nativeCli.clientId && !nativeCli.clientSecret,
       "Public Native/CLI OAuth client must not receive a client secret");
     ownedApps.push({ id: nativeCli.applicationId, projectId: projectA });
-    await runOidcAuthorizationE2E({
-      issuer, projectId: projectA, foreignProjectId: projectB,
-      clientId: nativeCli.clientId, clientSecret: "",
-      userId: userAId, userName: "oidc-live-" + suffix + "-a",
-      password: "E2e!Test-" + suffix + "-a", skipLogout: true,
-      assertCodeReplayDenied: true,
-    });
-    console.log("PASS: isolated Native/CLI public PKCE S256, real browser callback, signed tenant JWT, refresh, code replay denied (no client secret)");
 
-    // RFC 8628 device authorization is distinct from the browser PKCE flow.
-    // Create an actual disposable Device Code client under the tenant A
-    // project, which requires project role checks. Its request MUST remain
-    // pending until a user explicitly consents; unauthenticated reads need
-    // session.read. This does NOT certify signed-in Login V2 consent/grants.
+    // RFC 8628 Device Authorization is a separate protocol from Native PKCE.
+    // Create a real device app under project A requiring tenant role checks.
+    // Keep the same unapproved device code while a genuinely signed-in user
+    // opens its verification URL. No automatic consent or project-grant bypass.
     const testDevice = await api<{ appId?: string; clientId?: string }>(
       "POST", "/management/v1/projects/" + encodeURIComponent(projectA) + "/apps/oidc", {
         name: "Isolated Security Device " + suffix,
@@ -641,8 +632,19 @@ async function main() {
     assert.ok(testDevice.appId && testDevice.clientId,
       "Isolated real Device Authorization client creation failed");
     ownedApps.push({ id: testDevice.appId, projectId: projectA });
-    await proveUnapprovedDeviceCodeCannotIssueToken({ clientId: testDevice.clientId });
+    const unapprovedDevice = await proveUnapprovedDeviceCodeCannotIssueToken({
+      clientId: testDevice.clientId,
+    });
 
+    await runOidcAuthorizationE2E({
+      issuer, projectId: projectA, foreignProjectId: projectB,
+      clientId: nativeCli.clientId, clientSecret: "",
+      userId: userAId, userName: "oidc-live-" + suffix + "-a",
+      password: "E2e!Test-" + suffix + "-a", skipLogout: true,
+      assertCodeReplayDenied: true,
+      unapprovedDevice,
+    });
+    console.log("PASS: isolated Native/CLI public PKCE S256, real browser callback, signed tenant JWT, refresh, code replay denied (no client secret)");
 
     // SECURITY PROOF (#398): same ZITADEL project, two distinct OAuth client
     // IDs, and a separate project/user. No real RP App User grant is created.
