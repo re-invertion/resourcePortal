@@ -15,6 +15,7 @@ import { ZitadelTenantProjectService } from "../src/tenant-oidc/zitadel-tenant-p
 import { ZitadelOAuthApplicationService } from "../src/oauth-applications/zitadel-oauth-application.service";
 import { runOidcAuthorizationE2E, assertRevokedRefreshCannotAuthorizeTenant } from "./tenant-oidc-browser-e2e";
 import { proveIsolatedTotpMfa } from "./tenant-oidc-totp-e2e";
+import { proveUnapprovedDeviceCodeCannotIssueToken } from "./tenant-oidc-device-unapproved-e2e";
 import { startActionProof } from "./tenant-oidc-actions-v2-proof";
 import { McpOAuthDcrService } from "../src/mcp/mcp-oauth-dcr.service";
 import { AppConsumersService } from "../src/app-consumers/app-consumers.service";
@@ -616,6 +617,32 @@ async function main() {
       assertCodeReplayDenied: true,
     });
     console.log("PASS: isolated Native/CLI public PKCE S256, real browser callback, signed tenant JWT, refresh, code replay denied (no client secret)");
+
+    // RFC 8628 device authorization is distinct from the browser PKCE flow.
+    // Create an actual disposable Device Code client under the tenant A
+    // project, which requires project role checks. Its request MUST remain
+    // pending until a user explicitly consents; unauthenticated reads need
+    // session.read. This does NOT certify signed-in Login V2 consent/grants.
+    const testDevice = await api<{ appId?: string; clientId?: string }>(
+      "POST", "/management/v1/projects/" + encodeURIComponent(projectA) + "/apps/oidc", {
+        name: "Isolated Security Device " + suffix,
+        redirectUris: [],
+        responseTypes: ["OIDC_RESPONSE_TYPE_CODE"],
+        grantTypes: ["OIDC_GRANT_TYPE_DEVICE_CODE"],
+        appType: "OIDC_APP_TYPE_NATIVE",
+        authMethodType: "OIDC_AUTH_METHOD_TYPE_NONE",
+        postLogoutRedirectUris: [],
+        version: "OIDC_VERSION_1_0",
+        devMode: false,
+        accessTokenType: "OIDC_TOKEN_TYPE_JWT",
+        idTokenUserinfoAssertion: true,
+      },
+    );
+    assert.ok(testDevice.appId && testDevice.clientId,
+      "Isolated real Device Authorization client creation failed");
+    ownedApps.push({ id: testDevice.appId, projectId: projectA });
+    await proveUnapprovedDeviceCodeCannotIssueToken({ clientId: testDevice.clientId });
+
 
     // SECURITY PROOF (#398): same ZITADEL project, two distinct OAuth client
     // IDs, and a separate project/user. No real RP App User grant is created.
