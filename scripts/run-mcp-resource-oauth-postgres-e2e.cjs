@@ -123,10 +123,15 @@ async function seed() {
     { id: A, name: "synthetic-a", displayName: "Synthetic A", contactEmail: "nobody@example.invalid" },
     { id: B, name: "synthetic-b", displayName: "Synthetic B", contactEmail: "nobody@example.invalid" },
   ] });
-  await prisma.role.create({ data: { id: "sso-login", name: "SSO login", permissions: [] } });
+  // Existing migrations may already seed platform-wide core roles and permissions.
+  await prisma.role.upsert({
+    where: { id: "sso-login" },
+    create: { id: "sso-login", name: "SSO login", permissions: [] },
+    update: {},
+  });
   await prisma.permission.createMany({ data: [
     { id: "appgroup.read" }, { id: "appgroup.deploy" },
-  ] });
+  ], skipDuplicates: true });
   await prisma.role.create({ data: {
     id: "mcp-synthetic-reader", name: "MCP synthetic restricted role",
     // Intentionally stale legacy wildcard must NOT affect normalized RBAC.
@@ -237,8 +242,8 @@ async function cleanup() {
   await prisma.mcpOAuthClient.deleteMany();
   await prisma.tenant.deleteMany({ where: { id: { in: [A, B] } } });
   await prisma.user.deleteMany({ where: { id: { in: [U, V] } } });
-  await prisma.role.deleteMany({ where: { id: { in: ["sso-login", "mcp-synthetic-reader"] } } });
-  await prisma.permission.deleteMany({ where: { id: { in: ["appgroup.read", "appgroup.deploy"] } } });
+  // Leave migration-provisioned core role/permission catalog untouched.
+  await prisma.role.deleteMany({ where: { id: "mcp-synthetic-reader" } });
 }
 (async () => {
   try {
