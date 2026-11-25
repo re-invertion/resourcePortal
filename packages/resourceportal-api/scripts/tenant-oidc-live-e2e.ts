@@ -16,6 +16,7 @@ import { ZitadelOAuthApplicationService } from "../src/oauth-applications/zitade
 import { runOidcAuthorizationE2E, assertRevokedRefreshCannotAuthorizeTenant } from "./tenant-oidc-browser-e2e";
 import { proveIsolatedTotpMfa } from "./tenant-oidc-totp-e2e";
 import { proveUnapprovedDeviceCodeCannotIssueToken } from "./tenant-oidc-device-unapproved-e2e";
+import { proveDeviceProjectGrantEnforcement } from "./tenant-oidc-device-project-grants-e2e";
 import { startActionProof } from "./tenant-oidc-actions-v2-proof";
 import { McpOAuthDcrService } from "../src/mcp/mcp-oauth-dcr.service";
 import { AppConsumersService } from "../src/app-consumers/app-consumers.service";
@@ -642,6 +643,21 @@ async function main() {
       "Isolated real Device Authorization client creation failed");
     ownedApps.push({ id: testDevice.appId, projectId: projectA });
     await proveUnapprovedDeviceCodeCannotIssueToken({ clientId: testDevice.clientId });
+    // Direct Device Authorization API P1 check (not a Login V2 UI check):
+    // privileged synthetic Login Client requests must reject user B's absent
+    // tenant A project grant, but accept user A's *actual* tenant A grant with
+    // the same client/session.link and signed JWT positive control.
+    await proveDeviceProjectGrantEnforcement({
+      api, clientId: testDevice.clientId,
+      allowed: {
+        userId: userAId, loginName: "oidc-live-" + suffix + "-a",
+        password: "E2e!Test-" + suffix + "-a",
+      },
+      denied: {
+        userId: userBId, loginName: "oidc-live-" + suffix + "-b",
+        password: "E2e!Test-" + suffix + "-b",
+      },
+    });
 
 
     // SECURITY PROOF (#398): same ZITADEL project, two distinct OAuth client
