@@ -109,11 +109,20 @@ async function signInBrowser(page, clientId, userName, password, discovery, call
   assert.equal(verified.payload.nonce,nonce);
   return verified.payload.sub;
 }
+// RFC8628 per-device minimum interval; slow_down adds five seconds.
+const devicePolls=new Map();
 async function deviceToken(discovery,clientId,deviceCode) {
+  const schedule=devicePolls.get(deviceCode);
+  assert.ok(schedule,"Missing issued Device Code polling metadata");
+  const remaining=schedule.nextAt-Date.now();
+  if(remaining>0) await new Promise(resolve=>setTimeout(resolve,remaining));
+  const started=Date.now();
   const result=await tokenRequest(discovery.token_endpoint,{
     grant_type:"urn:ietf:params:oauth:grant-type:device_code",
     client_id:clientId,device_code:deviceCode,
   });
+  if(result.body.error==="slow_down") schedule.intervalMs+=5000;
+  schedule.nextAt=started+schedule.intervalMs;
   return result;
 }
 async function deviceRequest(discovery,clientId) {
@@ -126,6 +135,9 @@ async function deviceRequest(discovery,clientId) {
   const info=await r.json();
   assert.ok(info.device_code && info.user_code && info.verification_uri_complete);
   assert.equal(new URL(info.verification_uri_complete).origin,issuer);
+  const interval=info.interval===undefined?5:Number(info.interval);
+  assert.ok(Number.isSafeInteger(interval)&&interval>0);
+  devicePolls.set(info.device_code,{intervalMs:interval*1000,nextAt:0});
   return info;
 }
 async function assertPending(discovery,clientId,code) {
@@ -363,10 +375,8 @@ async function advanceDeviceCodeEntry(page, code) {
       "Valid user cannot see the explicit Allow decision");
     // One explicit UI click, never via API admin PAT; do not auto-approve.
     await approve.click();
-    const interval=Math.min(30,Math.max(5,Math.ceil(Number(positive.interval) || 5)));
     let approved;
     for(let attempt=0;attempt<5;attempt++){
-      await page.waitForTimeout((interval+1)*1000);
       const result=await deviceToken(discovery,deviceClientId,positive.device_code);
       if(result.status===200){approved=result.body;break;}
       assert.equal(result.status,400,
