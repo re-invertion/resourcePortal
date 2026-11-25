@@ -14,6 +14,7 @@ import { TenantOidcAutoRolloutService } from "../src/tenant-oidc/tenant-oidc-aut
 import { ZitadelTenantProjectService } from "../src/tenant-oidc/zitadel-tenant-project.service";
 import { ZitadelOAuthApplicationService } from "../src/oauth-applications/zitadel-oauth-application.service";
 import { runOidcAuthorizationE2E, assertRevokedRefreshCannotAuthorizeTenant } from "./tenant-oidc-browser-e2e";
+import { proveIsolatedTotpMfa } from "./tenant-oidc-totp-e2e";
 import { startActionProof } from "./tenant-oidc-actions-v2-proof";
 import { McpOAuthDcrService } from "../src/mcp/mcp-oauth-dcr.service";
 import { AppConsumersService } from "../src/app-consumers/app-consumers.service";
@@ -1078,6 +1079,15 @@ async function main() {
       "GET", "/management/v1/users/" + userBId + "/grants/" + rowB.zitadelGrantId,
     );
     assert.equal(stillB.userGrant.projectId, projectB, "Tenant A revocation harmed Tenant B");
+    // New evidence on the synthetic isolated ZITADEL user: verify that a
+    // password-checked session cannot claim MFA until real TOTP validation.
+    // Run AFTER browser/OIDC token paths so enrollment does not change those
+    // flows or silently alter other identity-provider policy.
+    await proveIsolatedTotpMfa({
+      api, userId: userAId,
+      loginName: "oidc-live-" + suffix + "-a",
+      password: "E2e!Test-" + suffix + "-a",
+    });
     await proveDroppedDcrRegistrationResponse();
     console.log("PASS: real HTTPS issuer/discovery/JWKS, two independent projects and client types,");
     console.log("  membership-backed grants, cross-tenant denial and live grant revocation.");
