@@ -324,7 +324,7 @@ async function fetchOidcDiscovery(issuer: string): Promise<OidcDiscoveryResponse
     throw new Error("OIDC discovery document is unavailable");
   }
   const discoveredIssuer = nonEmptyString(payload.issuer);
-  if (discoveredIssuer && discoveredIssuer.replace(/\/+$/, "") !== issuer) {
+  if (!discoveredIssuer || discoveredIssuer.replace(/\/+$/, "") !== issuer) {
     throw new Error("OIDC discovery issuer mismatch");
   }
   const deviceAuthorizationEndpoint = nonEmptyString(payload.device_authorization_endpoint);
@@ -434,7 +434,9 @@ function parseDeviceToken(payload: unknown): DeviceTokenResponse {
   const tokenType = nonEmptyString(payload.token_type);
   const expiresIn = positiveNumber(payload.expires_in);
   const refreshToken = nonEmptyString(payload.refresh_token);
-  if (!accessToken || !tokenType) {
+  // ResourcePortal's API only accepts bearer tokens. A proof-of-possession
+  // token (e.g. DPoP) must never be silently sent as Authorization: Bearer.
+  if (!accessToken || tokenType?.toLowerCase() !== "bearer") {
     throw new Error("OIDC token endpoint returned malformed data");
   }
   return {
