@@ -38,7 +38,7 @@ jobs:
     env:
       TENANT_OIDC_E2E_ISOLATED: 'true'
       GITHUB_ACTIONS: 'true'
-      ZITADEL_VERSION: v4.17.0
+      ZITADEL_VERSION: v4.19.5
     steps:
       - uses: actions/checkout@v4
         with:
