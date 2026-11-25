@@ -1,6 +1,7 @@
 import { ResourcePortalClient } from "@resource-portal/sdk";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -77,8 +78,23 @@ export function readConfig(): CliConfig {
 
 export function writeConfig(config: CliConfig) {
   const path = configPath();
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  const directory = dirname(path);
+  // Refresh tokens must never be written into an inherited world-readable
+  // config file. Restrict the existing directory before creating the file,
+  // and atomically replace the old inode instead of following a symlink.
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  chmodSync(directory, 0o700);
+  const temporaryPath = join(directory, `.config-${randomUUID()}.tmp`);
+  try {
+    writeFileSync(temporaryPath, `${JSON.stringify(config, null, 2)}\n`, {
+      mode: 0o600,
+      flag: "wx",
+    });
+    renameSync(temporaryPath, path);
+    chmodSync(path, 0o600);
+  } finally {
+    if (existsSync(temporaryPath)) rmSync(temporaryPath);
+  }
 }
 
 export function clearConfig() {
