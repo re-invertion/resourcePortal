@@ -13,6 +13,7 @@ export async function runOidcAuthorizationE2E(input: {
   projectId: string;
   foreignProjectId: string;
   clientId: string;
+  /** Confidential Web client secret; empty only for public Native/SPA PKCE clients. */
   clientSecret: string;
   userId: string;
   userName: string;
@@ -114,12 +115,19 @@ export async function runOidcAuthorizationE2E(input: {
     const body = new URLSearchParams({
       grant_type: "authorization_code", code, redirect_uri: callback, code_verifier: challengeVerifier,
     });
+    // Public Native/SPA clients MUST send client_id in the form body and MUST
+    // NOT authenticate with a fabricated Basic secret. Both modes still use
+    // PKCE S256, the exact registered redirect and the same issuer checks.
+    if (!input.clientSecret) body.set("client_id", input.clientId);
+    const tokenHeaders = {
+      "content-type": "application/x-www-form-urlencoded",
+      ...(input.clientSecret
+        ? { authorization: "Basic " + Buffer.from(input.clientId + ":" + input.clientSecret).toString("base64") }
+        : {}),
+    };
     const tokenResponse = await fetch(discovery.token_endpoint, {
       method: "POST",
-      headers: {
-        "content-type": "application/x-www-form-urlencoded",
-        authorization: "Basic " + Buffer.from(input.clientId + ":" + input.clientSecret).toString("base64"),
-      },
+      headers: tokenHeaders,
       body,
       signal: AbortSignal.timeout(20000),
     });
@@ -139,10 +147,7 @@ export async function runOidcAuthorizationE2E(input: {
       // Never log the code, verifier, Basic header, callback URL or response.
       const replayResponse = await fetch(discovery.token_endpoint, {
         method: "POST",
-        headers: {
-          "content-type": "application/x-www-form-urlencoded",
-          authorization: "Basic " + Buffer.from(input.clientId + ":" + input.clientSecret).toString("base64"),
-        },
+        headers: tokenHeaders,
         body: new URLSearchParams(body),
         signal: AbortSignal.timeout(20000),
       });
@@ -172,15 +177,14 @@ export async function runOidcAuthorizationE2E(input: {
       "Real token omitted the tenant's membership role");
     // Exercise an actual refresh while the grant is still active, not merely
     // the presence of an unused refresh token in the initial response.
+    const refreshBody = new URLSearchParams({
+      grant_type: "refresh_token", refresh_token: tokens.refresh_token,
+    });
+    if (!input.clientSecret) refreshBody.set("client_id", input.clientId);
     const refreshResponse = await fetch(discovery.token_endpoint, {
       method: "POST",
-      headers: {
-        "content-type": "application/x-www-form-urlencoded",
-        authorization: "Basic " + Buffer.from(input.clientId + ":" + input.clientSecret).toString("base64"),
-      },
-      body: new URLSearchParams({
-        grant_type: "refresh_token", refresh_token: tokens.refresh_token,
-      }),
+      headers: tokenHeaders,
+      body: refreshBody,
       signal: AbortSignal.timeout(20000),
     });
     if (!refreshResponse.ok) throw new Error("Live OIDC refresh denied HTTP " + refreshResponse.status);
