@@ -152,6 +152,7 @@ function setupSelfMember(owner = false, status = MembershipStatus.Active) {
   Object.assign(f.tx, {
     tenantAppClientGrant: oauthGrants,
     tenantNativeAppGrant: nativeGrants,
+    oAuthApplication: { findMany: vi.fn().mockResolvedValue([]) },
   });
   return {
     ...f, owned, oauthGrants, nativeGrants,
