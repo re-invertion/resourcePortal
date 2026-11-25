@@ -595,6 +595,27 @@ async function main() {
     assert.ok(spa.clientId && !spa.clientSecret, "SPA must not be given confidential credentials");
     ownedApps.push({ id: spa.applicationId, projectId: projectA });
 
+    // #286: previous HTTPS evidence exercised confidential Web PKCE only.
+    // Prove a real public Native/CLI app can complete an interactive code
+    // flow, signed token verification and live refresh with NO client secret.
+    // This is the disposable test issuer, not migration of a user account.
+    const nativeCli = await clients.provision({
+      name: "Isolated Native CLI " + suffix, type: "Native",
+      redirectUris: ["http://127.0.0.1:8765/oidc/callback"],
+      postLogoutRedirectUris: ["https://localhost:8443/logout"],
+    }, projectA);
+    assert.ok(nativeCli.clientId && !nativeCli.clientSecret,
+      "Public Native/CLI OAuth client must not receive a client secret");
+    ownedApps.push({ id: nativeCli.applicationId, projectId: projectA });
+    await runOidcAuthorizationE2E({
+      issuer, projectId: projectA, foreignProjectId: projectB,
+      clientId: nativeCli.clientId, clientSecret: "",
+      userId: userAId, userName: "oidc-live-" + suffix + "-a",
+      password: "E2e!Test-" + suffix + "-a", skipLogout: true,
+      assertCodeReplayDenied: true,
+    });
+    console.log("PASS: isolated Native/CLI public PKCE S256, real browser callback, signed tenant JWT, refresh, code replay denied (no client secret)");
+
     // SECURITY PROOF (#398): same ZITADEL project, two distinct OAuth client
     // IDs, and a separate project/user. No real RP App User grant is created.
     // A real V2 preaccesstoken webhook must DENY the revoked client's refresh,
