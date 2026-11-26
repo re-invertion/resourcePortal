@@ -34,6 +34,8 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           npx playwright install --with-deps chromium
+      - name: Assert OAuth secrets cannot leak through Login V2 browser failures
+        run: node --test test/tenant-oidc-login-v2/fail-safe-error.test.cjs
       - name: Run real Login V2 browser PKCE and explicit device consent regression
         shell: bash
         run: bash scripts/run-tenant-oidc-login-v2-e2e.sh
