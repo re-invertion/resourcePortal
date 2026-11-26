@@ -1397,11 +1397,6 @@ export class TenantsService {
     if (dto.roleIds !== undefined) {
       await this.ensureRolesExist(dto.roleIds);
     }
-    await this.assertOwnerRoleChangeAllowed(
-      tenantId,
-      actor,
-      [...existing.roles.map(({ role }) => role.id), ...(dto.roleIds ?? [])],
-    );
     if (dto.nativeApplicationKeys?.some(key => key !== "web" && key !== "cli")) {
       throw new BadRequestException("Invalid ResourcePortal client key");
     }
@@ -1412,6 +1407,13 @@ export class TenantsService {
         where: { id: membershipId, tenantId }, include: this.membershipIncludes(),
       });
       if (!lockedMembership) throw new NotFoundException("TenantMembership not found");
+      // Authorize Owner changes against the same tenant-locked snapshot that
+      // is used for the mutation, never against a pre-transaction role read.
+      await this.assertOwnerRoleChangeAllowed(
+        tenantId, actor,
+        [...lockedMembership.roles.map(({ role }) => role.id), ...(dto.roleIds ?? [])],
+        tx,
+      );
       // The membership.update permission also permits managing one's own access.
       // Active Owners already hold tenant-wide privileges. Other administrators
       // may revoke/downgrade their own access, but cannot self-assign roles,
@@ -1657,9 +1659,10 @@ export class TenantsService {
     tenantId: string,
     actor: AuthenticatedUser,
     roleIds: string[],
+    client: Prisma.TransactionClient = this.prisma,
   ) {
     if (!roleIds.includes(TENANT_OWNER_ROLE_ID)) return;
-    const membership = await this.prisma.tenantMembership.findUnique({
+    const membership = await client.tenantMembership.findUnique({
       where: { userId_tenantId: { userId: actor.id, tenantId } },
       select: {
         status: true,
