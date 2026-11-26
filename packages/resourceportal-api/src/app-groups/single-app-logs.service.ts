@@ -51,17 +51,95 @@ export class SingleAppLogsService {
   }
 }
 
-/** Mask OAuth callback/query credentials in tenant-facing container logs. */
-function redactOAuthLogLine(line: string): string {
-  return line
+/** Mask structured OAuth fields and credential-bearing text before tenant log access.
+ * Arbitrary application logs are NOT guaranteed secret-free. Unparseable
+ * credential-bearing lines are suppressed rather than attempting to guess
+ * boundaries of an opaque token, JSON fragment or multiline header.
+ */
+const redacted = "[REDACTED]";
+const sensitiveKeys = new Set([
+  "authorization", "proxyauthorization", "cookie", "setcookie", "headers",
+  "requestheaders", "responseheaders", "accesstoken", "refreshtoken", "idtoken",
+  "registrationaccesstoken", "registrationtoken", "devicecode", "usercode",
+  "codeverifier", "clientsecret", "authorizationcode", "code", "state",
+  "sessionstate", "sessiontoken", "nonce", "codechallenge", "password",
+  "recoverycode", "recoverycodes", "totpsecret", "token", "secret",
+]);
+const normalizeKey = (key: string) => key.toLowerCase().replace(/[^a-z0-9]/g, "");
+const sensitiveKey = (key: string) => sensitiveKeys.has(normalizeKey(key));
+// Match field assignments after unescaping only for detection. Never emit a
+// decoded diagnostic which might reveal credentials not present in the input.
+const fieldAssignment = /(?:^|[^a-z0-9])(?:["']?)(authorization|proxy[-_ ]?authorization|(?:set[-_ ]?)?cookie|(?:request[-_ ]?|response[-_ ]?)?headers|access[-_ ]?token|refresh[-_ ]?token|id[-_ ]?token|registration[-_ ]?(?:access[-_ ]?)?token|device[-_ ]?code|user[-_ ]?code|code[-_ ]?verifier|client[-_ ]?secret|authorization[-_ ]?code|code|state|session[-_ ]?(?:state|token)|nonce|code[-_ ]?challenge|password|recovery[-_ ]?codes?|totp[-_ ]?secret|token|secret)["']?\s*[:=]\s*/gi;
+
+function redactOAuthLogLine(line: string, depth = 0): string {
+  if (depth > 12 || line.length > 65536) return redacted;
+  // Docker commonly prefixes JSON with a timestamp. Preserve only a sanitized
+  // prefix and JSON object; recursively inspect nested/escaped JSON strings.
+  const trimmed = line.trim();
+  const jsonStart = trimmed.search(/[[{]/);
+  if (jsonStart >= 0) {
+    try {
+      const parsed: unknown = JSON.parse(trimmed.slice(jsonStart));
+      const prefix = trimmed.slice(0, jsonStart).trimEnd();
+      return (prefix ? redactText(prefix) + " " : "") +
+        JSON.stringify(redactValue(parsed, depth + 1));
+    } catch {
+      // Malformed or partial structured data must use the fail-closed text path.
+    }
+  }
+  return redactText(line);
+}
+
+function redactValue(value: unknown, depth: number): unknown {
+  if (depth > 12) return redacted;
+  if (typeof value === "string") return redactOAuthLogLine(value, depth + 1);
+  if (Array.isArray(value)) {
+    if (typeof value[0] === "string" && sensitiveKey(value[0])) return redacted;
+    return value.map(entry => redactValue(entry, depth + 1));
+  }
+  if (value !== null && typeof value === "object") {
+    const fields = Object.entries(value);
+    // Structured header/field entries often use {"name":"Authorization",
+    // "value":"..."}, rather than using the header as the object key.
+    if (fields.some(([key, entry]) =>
+      ["name", "key", "header", "field"].includes(normalizeKey(key)) &&
+      typeof entry === "string" && sensitiveKey(entry))) return redacted;
+    return Object.fromEntries(fields.map(([key, entry]) => [
+      key, sensitiveKey(key) ? redacted : redactValue(entry, depth + 1),
+    ]));
+  }
+  return value;
+}
+
+function redactText(line: string): string {
+  const cleaned = line
     .replace(
       /(\/(?:oauth2\/callback|api\/auth\/callback|api\/mcp\/oauth\/upstream\/callback|oauth\/v2\/authorize))\?[^\s"'<>]+/gi,
       "$1?[REDACTED]",
     )
     .replace(
-      /((?:[?&]|&amp;|\\u0026)(?:code|state|session_state|id_token|access_token|refresh_token|code_verifier|client_secret)=)[^\s&#"'<>\\]+/gi,
+      /((?:[?&]|&amp;|\\u0026)(?:code|state|session_state|id_token|access_token|refresh_token|code_verifier|client_secret|device_code|user_code|registration_access_token|registration_token|nonce|code_challenge|session_token)=)[^\s&#"'<>\\]+/gi,
       "$1[REDACTED]",
     )
-    .replace(/(\bAuthorization:\s*(?:Bearer|Basic)\s+)[^\s,"'\\]+/gi, "$1[REDACTED]")
+    .replace(/(\b(?:Proxy-)?Authorization:\s*(?:Bearer|Basic)\s+)[^\s,"'\\]+/gi, "$1[REDACTED]")
     .replace(/(\b(?:Cookie|Set-Cookie):\s*)[^\r\n]+/gi, "$1[REDACTED]");
+  // Permit the explicitly masked ordinary query/header forms only. For
+  // escaped/encoded keys, ambiguous assignments, or header fragments, redact
+  // the whole diagnostic. Don't use a single regex to guess JSON boundaries.
+  let decoded = cleaned;
+  for (let i = 0; i < 3; i++) {
+    const next = decoded
+      .replace(/\\u([a-f0-9]{4})/gi, (_, code: string) => String.fromCharCode(parseInt(code, 16)))
+      .replace(/\\(["'\\/])/g, "$1")
+      .replace(/%([a-f0-9]{2})/gi, (_, code: string) => String.fromCharCode(parseInt(code, 16)));
+    if (next === decoded) break;
+    decoded = next;
+  }
+  for (const match of decoded.matchAll(fieldAssignment)) {
+    const tail = decoded.slice((match.index ?? 0) + match[0].length);
+    if (!/^(?:(?:Bearer|Basic)\s+)?\[REDACTED\](?:$|[\s&#,"'<>\\}\]])/i.test(tail)) return redacted;
+  }
+  // Credentials embedded as free-form Bearer/Basic header values are unsafe.
+  if (/\b(?:Bearer|Basic)\s+(?!\[REDACTED\])\S+/i.test(decoded)) return redacted;
+  return cleaned;
 }

@@ -71,6 +71,33 @@ describe("SingleAppLogsService", () => {
     expect(output).toContain("status=500");
   });
 
+  it("redacts structured, nested, escaped and non-query OAuth credentials", async () => {
+    const { service } = fixture();
+    const lines = [
+      JSON.stringify({ status: 401, headers: { AUTHORIZATION: "Bearer JSON_BEARER", cookie: "JSON_COOKIE" },
+        response: { accessToken: "JSON_ACCESS", registration_access_token: "JSON_REG", device_code: "JSON_DEVICE" },
+        nested: JSON.stringify({ refresh_token: "NESTED_REFRESH", userCode: "NESTED_USER" }) }),
+      '2026-11-26 ' + JSON.stringify({ event: "auth", payload: [{ name: "Set-Cookie", value: "HEADER_PAIR" },
+        ["Authorization", "Bearer TUPLE_HEADER"], { CLIENT_SECRET: "CLIENT_FIELD" }] }),
+      'diagnostic {"access_token":"BROKEN_JSON',
+      'fragment \\"registration_access_token\\":\\"ESCAPED_REG\\"',
+      'GET /path?%61ccess%5Ftoken=ENCODED_TOKEN',
+      'device_code=DEVICE_FIELD user_code=USER_FIELD',
+      'token: FREE_FORM',
+      'Bearer UNLABELED_BEARER',
+      JSON.stringify({ status: 200, message: "ordinary log message" }),
+    ];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ lines }) }));
+    const output = (await service.list("tenant", "group", "app")).lines.join("\n");
+    for (const secret of ["JSON_BEARER", "JSON_COOKIE", "JSON_ACCESS", "JSON_REG", "JSON_DEVICE",
+      "NESTED_REFRESH", "NESTED_USER", "HEADER_PAIR", "TUPLE_HEADER", "CLIENT_FIELD", "BROKEN_JSON",
+      "ESCAPED_REG", "ENCODED_TOKEN", "DEVICE_FIELD", "USER_FIELD", "FREE_FORM", "UNLABELED_BEARER"]) {
+      expect(output).not.toContain(secret);
+    }
+    expect(output).toContain('"status":401');
+    expect(output).toContain("ordinary log message");
+  });
+
   it("caps the response to 64KiB", async () => {
     const { service } = fixture();
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve ({ lines: ["x".repeat(100000)] }) }));

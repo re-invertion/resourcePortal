@@ -31,7 +31,33 @@ function fixture() {
     verifierCipher: string; expiresAt: Date;
   }>();
   let client: { tenantId: string; clientId: string } | null = null;
+  const reservations = new Map<string, { status: string; observedClientId?: string }>();
+  const executeRaw = vi.fn((strings: TemplateStringsArray, ...values: unknown[]) => {
+    const sql = strings.join("?");
+    if (sql.includes("INSERT INTO")) {
+      const tenantId = String(values[0]);
+      if (reservations.has(tenantId)) return Promise.resolve(0);
+      reservations.set(tenantId, { status: "Pending" });
+      return Promise.resolve(1);
+    }
+    const tenantId = String(values[1]);
+    const reservation = reservations.get(tenantId);
+    if (!reservation) return Promise.resolve(0);
+    reservation.status = sql.includes("SET \"status\" = 'Bound'") ? "Bound" : "Uncertain";
+    if (typeof values[0] === "string") reservation.observedClientId = values[0];
+    return Promise.resolve(1);
+  });
   const prisma = {
+    $executeRaw: executeRaw,
+    $transaction: vi.fn(async (fn: (tx: {
+      mcpOAuthUpstreamClient: { create: (args: { data: { tenantId: string; clientId: string } }) =>
+        Promise<{ tenantId: string; clientId: string }> };
+      $executeRaw: typeof executeRaw;
+    }) => Promise<unknown>) => {
+      const previous = client;
+      try { return await fn({ mcpOAuthUpstreamClient: prisma.mcpOAuthUpstreamClient, $executeRaw: executeRaw }); }
+      catch (error) { client = previous; throw error; }
+    }),
     mcpOAuthUpstreamClient: {
       findUnique: vi.fn().mockImplementation((args: { where: { tenantId?: string } }) =>
         Promise.resolve(client?.tenantId === args.where.tenantId ? client : null)),
@@ -103,7 +129,11 @@ function fixture() {
     prisma as unknown as PrismaService, config as unknown as ConfigService,
     oidc as unknown as OidcAuthService, encryption as unknown as EncryptionService,
   );
-  return { svc, prisma, encryption, transport, logins, oidc };
+  const restart = () => new McpUpstreamLoginService(
+    prisma as unknown as PrismaService, config as unknown as ConfigService,
+    oidc as unknown as OidcAuthService, encryption as unknown as EncryptionService,
+  );
+  return { svc, prisma, encryption, transport, logins, oidc, reservations, restart };
 }
 
 afterEach(() => vi.restoreAllMocks());
@@ -120,6 +150,7 @@ describe("#442 MCP identity-only upstream OAuth PKCE, tenant scope and replay", 
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");
     expect(url.searchParams.get("nonce")).toBe(flow.state);
     expect(f.prisma.mcpOAuthUpstreamClient.create).toHaveBeenCalledTimes(1);
+    expect(f.reservations.get(tenant)).toEqual({ status: "Bound", observedClientId: upstreamClientId });
     const login = [...f.logins.values()][0];
     expect(login.resource).toBe(input.resource);
     expect(login.tenantId).toBe(tenant);
@@ -198,48 +229,62 @@ describe("#442 MCP identity-only upstream OAuth PKCE, tenant scope and replay", 
       code: "MCP_IDENTITY_DCR_PARTIAL_REGISTRATION", clientId: upstreamClientId,
     });
     expect(JSON.stringify(response)).not.toContain("secret DB internals");
+    expect(f.reservations.get(tenant)).toEqual({ status: "Uncertain", observedClientId: upstreamClientId });
+    await expect(f.restart().start(input, origin)).rejects.toMatchObject({
+      response: { code: "MCP_IDENTITY_DCR_RECONCILIATION_REQUIRED" },
+    });
     expect(f.prisma.mcpOAuthUpstreamLogin.create).not.toHaveBeenCalled();
     expect(f.transport.mock.calls.filter(([, stage]) => stage === "registration"))
       .toHaveLength(1);
   });
 
-  it("never reports two successful identity logins when concurrent DCR registration leaves one client orphaned", async () => {
+  it("serializes concurrent first-connect requests across service instances before the provider POST", async () => {
     const f = fixture();
-    const differentClient = "340396026519785525";
-    const created: string[] = [];
-    f.prisma.mcpOAuthUpstreamClient.create.mockImplementation((args: {
-      data: { tenantId: string; clientId: string };
-    }) => {
-      if (created.length) return Promise.reject(new Error("P2002 unique client binding"));
-      created.push(args.data.clientId);
-      return Promise.resolve(args.data);
-    });
-    let issued = 0;
-    f.transport.mockImplementation((_, stage) => {
-      expect(stage).toBe("registration");
-      const registrationId = issued++ === 0 ? upstreamClientId : differentClient;
-      return Promise.resolve(new Response(JSON.stringify({
-        client_id: registrationId,
+    let release!: () => void;
+    let dispatched!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const started = new Promise<void>(resolve => { dispatched = resolve; });
+    f.transport.mockImplementationOnce(async () => {
+      dispatched();
+      await pending;
+      return Response.json({
+        client_id: upstreamClientId,
         redirect_uris: [`${origin}/api/mcp/oauth/upstream/callback`],
         token_endpoint_auth_method: "none",
-      }), { status: 201 }));
+      }, { status: 201 });
     });
-    const results = await Promise.allSettled([
-      f.svc.start(input, origin), f.svc.start(input, origin),
-    ]);
-    const successes = results.filter((r): r is PromiseFulfilledResult<Awaited<ReturnType<typeof f.svc.start>>> =>
-      r.status === "fulfilled");
-    const failures = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
-    expect(successes).toHaveLength(1);
-    expect(failures).toHaveLength(1);
-    expect(issued).toBe(2);
-    expect(created).toEqual([upstreamClientId]);
-    const publicError = (failures[0].reason as { getResponse: () => unknown }).getResponse();
-    expect(publicError).toMatchObject({
-      code: "MCP_IDENTITY_DCR_PARTIAL_REGISTRATION", clientId: differentClient,
+    const first = f.svc.start(input, origin);
+    await started;
+    await expect(f.restart().start(input, origin)).rejects.toMatchObject({
+      response: { code: "MCP_IDENTITY_DCR_RECONCILIATION_REQUIRED" },
     });
-    expect(f.logins.size).toBe(1);
-    expect(f.prisma.mcpOAuthUpstreamClient.create).toHaveBeenCalledTimes(2);
+    release();
+    await expect(first).resolves.toHaveProperty("url");
+    await expect(f.restart().start(input, origin)).resolves.toHaveProperty("url");
+    expect(f.transport.mock.calls.filter(([, stage]) => stage === "registration")).toHaveLength(1);
+    expect(f.prisma.mcpOAuthUpstreamClient.create).toHaveBeenCalledTimes(1);
+    expect(f.reservations.get(tenant)?.status).toBe("Bound");
+  });
+
+  it("persists a dropped or rejected registration across restart without resubmitting DCR", async () => {
+    const f = fixture();
+    f.transport.mockResolvedValueOnce(new Response("private response", { status: 503 }));
+    await expect(f.svc.start(input, origin)).rejects.toMatchObject({
+      response: { code: "MCP_IDENTITY_DCR_REGISTRATION_OUTCOME_UNCERTAIN" },
+    });
+    expect(f.reservations.get(tenant)?.status).toBe("Uncertain");
+    await expect(f.restart().start(input, origin)).rejects.toMatchObject({
+      response: { code: "MCP_IDENTITY_DCR_RECONCILIATION_REQUIRED" },
+    });
+    expect(f.transport.mock.calls.filter(([, stage]) => stage === "registration")).toHaveLength(1);
+    expect(f.prisma.mcpOAuthUpstreamClient.create).not.toHaveBeenCalled();
+  });
+
+  it("blocks registration when the durable reservation cannot be committed", async () => {
+    const f = fixture();
+    f.prisma.$executeRaw.mockRejectedValueOnce(new Error("database unavailable"));
+    await expect(f.svc.start(input, origin)).rejects.toThrow();
+    expect(f.transport).not.toHaveBeenCalled();
   });
 
   it("classifies accepted identity DCR with malformed metadata as uncertain without binding", async () => {
@@ -270,6 +315,9 @@ describe("#442 MCP identity-only upstream OAuth PKCE, tenant scope and replay", 
     }
     expect(response).toMatchObject({ code: "MCP_IDENTITY_DCR_REGISTRATION_OUTCOME_UNCERTAIN" });
     expect(JSON.stringify(response)).not.toContain("secret-registration-token");
+    await expect(f.restart().start(input, origin)).rejects.toMatchObject({
+      response: { code: "MCP_IDENTITY_DCR_RECONCILIATION_REQUIRED" },
+    });
     expect(f.transport.mock.calls.filter(([, stage]) => stage === "registration"))
       .toHaveLength(1);
     expect(f.prisma.mcpOAuthUpstreamClient.create).not.toHaveBeenCalled();

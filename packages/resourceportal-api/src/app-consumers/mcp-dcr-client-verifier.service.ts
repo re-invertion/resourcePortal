@@ -11,7 +11,7 @@ export class McpDcrClientVerifierService {
   constructor(private readonly config: ConfigService) {}
 
   async isTrustedChatGptClient(clientId: string): Promise<boolean> {
-    if (!clientId || clientId.length > 256) return false;
+    if (!clientId || clientId.length > 200 || clientId.trim() !== clientId) return false;
     const token = this.config.get<string>("ZITADEL_MANAGEMENT_TOKEN");
     const issuer = this.config.get<string>("OIDC_ISSUER_URL");
     if (!token || !issuer?.startsWith("https://")) return false;
@@ -28,6 +28,7 @@ export class McpDcrClientVerifierService {
     const headers = {
       authorization: `Bearer ${token}`,
       "content-type": "application/json",
+      "Connect-Protocol-Version": "1",
       "x-zitadel-instance-host": host,
       "x-zitadel-public-host": host,
     };
@@ -72,55 +73,32 @@ export class McpDcrClientVerifierService {
     }
     const project: unknown = projectList[0];
     if (!isRecord(project) || project.name !== "ZITADEL DCR") return false;
-    if (!isRecord(project) || typeof project.id !== "string") return false;
+    if (!isRecord(project) || typeof project.id !== "string" || !project.id) return false;
 
-    // ZITADEL's Management ListApps API defaults to 100 results. A client
-    // registered after that first page must not be falsely denied. Bound the
-    // search, response size and number of pages; never accept partial proof.
-    const pageSize = 100;
-    const maxPages = 20;
-    const path = `/management/v1/projects/${encodeURIComponent(project.id)}/apps/_search`;
-    const seenAppIds = new Set<string>();
-    let candidate: Record<string, unknown> | undefined;
-    let expectedTotal: number | undefined;
-    for (let page = 0; page < maxPages; page += 1) {
-      const offset = page * pageSize;
-      const applications = await query(path, { query: { limit: pageSize, offset } });
-      const total = readTotalResult(applications?.details);
-      const appList = applications?.result;
-      // Permit protobuf to omit an empty repeated array only with an actual
-      // ListDetails envelope, but that cannot establish a trusted client.
-      if (total === null || total > pageSize * maxPages ||
-          (expectedTotal !== undefined && total !== expectedTotal) ||
-          !Array.isArray(appList) || appList.length > pageSize ||
-          appList.length !== Math.min(pageSize, Math.max(0, total - offset))) {
-        return false;
-      }
-      expectedTotal = total;
-      for (const entry of appList) {
-        if (!isRecord(entry) || typeof entry.id !== "string" ||
-            entry.id.length === 0 || seenAppIds.has(entry.id)) {
-          return false;
-        }
-        seenAppIds.add(entry.id);
-        if (!isRecord(entry.oidcConfig) || entry.oidcConfig.clientId !== clientId) {
-          continue;
-        }
-        // A duplicate client_id anywhere in the complete bounded inventory
-        // means the registered OAuth identity is ambiguous. Never accept the
-        // first match before the remaining pages have been validated.
-        if (candidate) return false;
-        candidate = entry;
-      }
-      if (offset + appList.length !== total) continue;
-      if (!candidate || !isRecord(candidate.oidcConfig)) return false;
-      const redirects = candidate.oidcConfig.redirectUris;
-      // Do not accept mixed redirect sets: another callback would allow
-      // redirecting the code to an untrusted party despite the trusted entry.
-      return Array.isArray(redirects) && redirects.length > 0 &&
-        redirects.every(isChatGptOAuthRedirect);
-    }
-    return false;
+    // ZITADEL v4.19.5 ApplicationService V2 supports an authoritative exact
+    // client-ID AND project-ID lookup. Never scan the shared DCR inventory:
+    // unrelated registrations and churn must not consume this client's budget.
+    // The limit of two makes ambiguous matches a denial, not a first-row win.
+    const apps = await query("/zitadel.application.v2.ApplicationService/ListApplications", {
+      pagination: { limit: 2 },
+      filters: [
+        { projectIdFilter: { projectId: project.id } },
+        { clientIdFilter: { clientId } },
+      ],
+    });
+    const appList = apps?.applications;
+    if (readTotalResult(apps?.pagination) !== 1 ||
+        !Array.isArray(appList) || appList.length !== 1) return false;
+    const candidate: unknown = appList[0];
+    if (!isRecord(candidate) || typeof candidate.applicationId !== "string" ||
+        !candidate.applicationId || candidate.projectId !== project.id ||
+        candidate.state !== "APPLICATION_STATE_ACTIVE" ||
+        !isRecord(candidate.oidcConfiguration) ||
+        candidate.oidcConfiguration.clientId !== clientId) return false;
+    // Do not accept mixed redirect sets or stale/inactive client identities.
+    const redirects = candidate.oidcConfiguration.redirectUris;
+    return Array.isArray(redirects) && redirects.length > 0 &&
+      redirects.every(isChatGptOAuthRedirect);
   }
 }
 
@@ -163,6 +141,7 @@ function readTotalResult(details: unknown): number | null {
   if (!isRecord(details)) return null;
   const value = details.totalResult;
   if (typeof value !== "number" && typeof value !== "string") return null;
+  if (typeof value === "string" && !/^\d+$/.test(value)) return null;
   const total = Number(value);
   return Number.isSafeInteger(total) && total >= 0 ? total : null;
 }

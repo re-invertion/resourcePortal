@@ -94,6 +94,30 @@ export class McpUpstreamLoginService {
     // Canonical RP origin validation happens before attempting the POST;
     // local configuration failures are not uncertain upstream mutations.
     const callbackUri = this.callback(origin);
+    // Persist a unique, non-expiring reservation BEFORE the external side
+    // effect. PostgreSQL commits this statement before the network call, so
+    // replicas, process restarts and ambiguous provider responses cannot
+    // dispatch another first-registration for this tenant. Never put a
+    // placeholder in McpOAuthUpstreamClient (the issuer's trusted allowlist).
+    const claimed = await this.prisma.$executeRaw`
+      INSERT INTO "McpOAuthUpstreamRegistration" ("tenantId", "status", "createdAt", "updatedAt")
+      VALUES (${tenantId}::uuid, 'Pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT ("tenantId") DO NOTHING
+    `;
+    if (claimed !== 1) {
+      // A completed binding is authoritative; a pending/uncertain reservation
+      // is never treated as proof and is not reset by a timer or request.
+      const bound = await this.prisma.mcpOAuthUpstreamClient.findUnique({ where: { tenantId } });
+      if (bound) return bound.clientId;
+      throw new ServiceUnavailableException({
+        code: "MCP_IDENTITY_DCR_RECONCILIATION_REQUIRED",
+        message: "An identity registration is pending or uncertain; reconcile the exact upstream client before retrying",
+      });
+    }
+    // A caller may have committed the binding after our initial read (e.g.
+    // during a rolling upgrade). Do not register another client in that case.
+    const bound = await this.prisma.mcpOAuthUpstreamClient.findUnique({ where: { tenantId } });
+    if (bound) return bound.clientId;
     let response: Response;
     try {
       response = await this.transport().fetch(discovery.registrationEndpoint, "registration", {
@@ -111,14 +135,23 @@ export class McpUpstreamLoginService {
       });
     } catch {
       // The upstream may have persisted a DCR client before its response
-      // failed. Never silently retry the non-idempotent registration POST.
+      // failed. The committed reservation survives even if updating its
+      // diagnostic status fails. Never retry a non-idempotent POST.
+      await this.markRegistrationUncertain(tenantId);
       throw new ServiceUnavailableException({
         code: "MCP_IDENTITY_DCR_REGISTRATION_OUTCOME_UNCERTAIN",
         message: "ZITADEL MCP identity registration may have been accepted; reconcile upstream clients before retrying",
       });
     }
     if (response.status !== 201) {
-      throw new ServiceUnavailableException("ZITADEL denied MCP identity client registration");
+      // A proxy or provider failure can occur after persistence. Retain the
+      // reservation even for non-201 responses; only an operator with
+      // authoritative reconciliation evidence may permit another attempt.
+      await this.markRegistrationUncertain(tenantId);
+      throw new ServiceUnavailableException({
+        code: "MCP_IDENTITY_DCR_REGISTRATION_OUTCOME_UNCERTAIN",
+        message: "ZITADEL identity registration was not confirmed; reconcile upstream clients before retrying",
+      });
     }
     // A malicious or compromised issuer response must not persist arbitrary
     // clients into the privileged issuer-global exact-client allowlist.
@@ -126,6 +159,7 @@ export class McpUpstreamLoginService {
     try {
       raw = await boundedJson(response);
     } catch {
+      await this.markRegistrationUncertain(tenantId);
       throw new ServiceUnavailableException({
         code: "MCP_IDENTITY_DCR_REGISTRATION_OUTCOME_UNCERTAIN",
         message: "ZITADEL MCP identity registration returned an unreadable accepted response; reconcile upstream clients before retrying",
@@ -136,26 +170,51 @@ export class McpUpstreamLoginService {
         !Array.isArray(raw.redirect_uris) ||
         raw.redirect_uris.length !== 1 || raw.redirect_uris[0] !== callbackUri ||
         raw.token_endpoint_auth_method !== "none") {
+      await this.markRegistrationUncertain(tenantId,
+        typeof clientId === "string" && /^\d{1,64}$/.test(clientId) ? clientId : undefined);
       throw new ServiceUnavailableException({
         code: "MCP_IDENTITY_DCR_REGISTRATION_OUTCOME_UNCERTAIN",
         message: "ZITADEL MCP identity registration returned invalid accepted metadata; reconcile upstream clients before retrying",
         ...(typeof clientId === "string" && /^\d{1,64}$/.test(clientId) ? { clientId } : {}),
       });
     }
+    // Record the observed numeric client ID before attempting the binding;
+    // a failure or restart must leave enough non-secret data to reconcile.
+    await this.markRegistrationUncertain(tenantId, clientId);
     try {
-      await this.prisma.mcpOAuthUpstreamClient.create({ data: { tenantId, clientId } });
+      await this.prisma.$transaction(async tx => {
+        await tx.mcpOAuthUpstreamClient.create({ data: { tenantId, clientId } });
+        const updated = await tx.$executeRaw`
+          UPDATE "McpOAuthUpstreamRegistration"
+          SET "status" = 'Bound', "observedClientId" = ${clientId}, "updatedAt" = CURRENT_TIMESTAMP
+          WHERE "tenantId" = ${tenantId}::uuid
+        `;
+        if (updated !== 1) throw new Error("Missing durable MCP identity registration reservation");
+      });
       return clientId;
     } catch {
-      // A concurrent registration can win the local unique constraint but
-      // leave THIS accepted ZITADEL DCR application orphaned. Never return
-      // the winning client as if this second registration was fully cleaned.
-      // The newly returned numeric client ID is safe for read-only operator
-      // reconciliation; its registration bearer is never returned or logged.
+      // Binding and final state are atomic. An uncertain commit can be
+      // resolved by reading the existing binding on the next request.
+      // Never create another external client or expose the registration bearer.
       throw new ServiceUnavailableException({
         code: "MCP_IDENTITY_DCR_PARTIAL_REGISTRATION",
         message: "ZITADEL MCP identity client was registered but its local binding was not confirmed; reconcile this client before retrying",
         clientId,
       });
+    }
+  }
+
+  private async markRegistrationUncertain(tenantId: string, clientId?: string) {
+    try {
+      await this.prisma.$executeRaw`
+        UPDATE "McpOAuthUpstreamRegistration"
+        SET "status" = 'Uncertain', "observedClientId" = COALESCE(${clientId ?? null}, "observedClientId"),
+            "updatedAt" = CURRENT_TIMESTAMP
+        WHERE "tenantId" = ${tenantId}::uuid AND "status" <> 'Bound'
+      `;
+    } catch {
+      // The initial committed Pending row is itself a permanent fail-closed
+      // barrier. Do not mask the sanitized registration outcome with DB details.
     }
   }
 

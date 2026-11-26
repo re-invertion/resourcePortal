@@ -14,6 +14,8 @@ const { PrismaClient } = require("@prisma/client");
 const { Reflector } = require("@nestjs/core");
 const { REQUIRED_PERMISSIONS_KEY } = require("../packages/resourceportal-api/dist/src/auth/auth.constants.js");
 const { McpResourceOAuthService } = require("../packages/resourceportal-api/dist/src/auth/mcp-resource-oauth.service.js");
+const { McpUpstreamLoginService } = require("../packages/resourceportal-api/dist/src/auth/mcp-upstream-login.service.js");
+const { OidcIssuerTransport } = require("../packages/resourceportal-api/dist/src/auth/oidc-issuer-transport.js");
 const { McpResourceOAuthController } = require("../packages/resourceportal-api/dist/src/mcp/mcp-resource-oauth.controller.js");
 const { TenantMcpSettingsService } = require("../packages/resourceportal-api/dist/src/mcp/tenant-mcp-settings.service.js");
 const { TenantMcpAccessGuard } = require("../packages/resourceportal-api/dist/src/mcp/tenant-mcp-access.guard.js");
@@ -156,8 +158,80 @@ async function seed() {
     } });
   }
 }
+// Production service, real separate Prisma connections and real committed
+// PostgreSQL state. Only the external non-idempotent provider response is
+// synthesized here; the pinned real provider is tested in the HTTPS job.
+async function proveIdentityRegistrationReservation() {
+  const issuer = "https://rp532-identity.synthetic.test";
+  const identityConfig = { get: key => ({
+    OIDC_ISSUER_URL: issuer,
+    RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true",
+    RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED: "true",
+  })[key] };
+  const oidc = { getDiscovery: async () => ({
+    authorizationEndpoint: issuer + "/oauth/v2/authorize",
+    tokenEndpoint: issuer + "/oauth/v2/token",
+    registrationEndpoint: issuer + "/oauth/v2/register",
+  }) };
+  const encryption = { encrypt: () => "synthetic-sealed-verifier" };
+  const replica = new PrismaClient();
+  const makeService = db => new McpUpstreamLoginService(db, identityConfig, oidc, encryption);
+  const input = tenantId => ({ tenantId, clientId: "synthetic-rp-client", resource: resource(tenantId),
+    redirectUri: callback, challenge, clientState: "synthetic-state", scope: "mcp offline_access" });
+  const originalFetch = OidcIssuerTransport.prototype.fetch;
+  let dispatched = 0;
+  let release, entered, first;
+  const barrier = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { entered = resolve; });
+  const hasCode = code => error => error?.getResponse?.()?.code === code;
+  try {
+    OidcIssuerTransport.prototype.fetch = async (url, stage) => {
+      assert.equal(String(url), issuer + "/oauth/v2/register");
+      assert.equal(stage, "registration");
+      dispatched++;
+      if (dispatched === 1) {
+        entered(); await barrier;
+        return Response.json({ client_id: "532000001", token_endpoint_auth_method: "none",
+          redirect_uris: [origin + "/api/mcp/oauth/upstream/callback"] }, { status: 201 });
+      }
+      if (dispatched === 2) throw new Error("synthetic response lost after possible acceptance");
+      throw new Error("unexpected duplicate registration POST");
+    };
+    first = makeService(prisma).start(input(A), origin);
+    await Promise.race([started, first.then(() => { throw new Error("reservation did not hold provider request"); })]);
+    await assert.rejects(() => makeService(replica).start(input(A), origin),
+      hasCode("MCP_IDENTITY_DCR_RECONCILIATION_REQUIRED"));
+    assert.equal(dispatched, 1);
+    release();
+    await first;
+    await makeService(replica).start(input(A), origin);
+    assert.equal(dispatched, 1);
+    assert.equal((await replica.mcpOAuthUpstreamClient.findUnique({ where: { tenantId: A } })).clientId, "532000001");
+    const bound = await replica.mcpOAuthUpstreamRegistration.findUnique({ where: { tenantId: A } });
+    assert.equal(bound.status, "Bound");
+    assert.equal(bound.observedClientId, "532000001");
+    await assert.rejects(() => makeService(prisma).start(input(B), origin),
+      hasCode("MCP_IDENTITY_DCR_REGISTRATION_OUTCOME_UNCERTAIN"));
+    const restarted = new PrismaClient();
+    try {
+      await assert.rejects(() => makeService(restarted).start(input(B), origin),
+        hasCode("MCP_IDENTITY_DCR_RECONCILIATION_REQUIRED"));
+      assert.equal(dispatched, 2);
+      assert.equal((await restarted.mcpOAuthUpstreamRegistration.findUnique({ where: { tenantId: B } })).status, "Uncertain");
+      assert.equal(await restarted.mcpOAuthUpstreamClient.findUnique({ where: { tenantId: B } }), null);
+      assert.equal(await restarted.mcpOAuthGrant.count(), 0);
+    } finally { await restarted.$disconnect(); }
+    console.log("PASS real PostgreSQL durable per-tenant identity DCR reservation: replica race, restart, uncertain outcome, no additional provider POST, no grant mutation");
+  } finally {
+    release();
+    if (first) await first.catch(() => undefined);
+    OidcIssuerTransport.prototype.fetch = originalFetch;
+    await replica.$disconnect();
+  }
+}
 async function run() {
   await seed();
+  await proveIdentityRegistrationReservation();
   const clientA = (await oauth.registerClient({ redirect_uris: [callback],
     grant_types: ["authorization_code", "refresh_token"], response_types: ["code"] })).client_id;
   const clientB = (await oauth.registerClient({ redirect_uris: [callback],
