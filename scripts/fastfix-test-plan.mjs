@@ -276,7 +276,7 @@ const classifiers = [
   [/^packages\/resourceportal-api\/scripts\/tenant-oidc-(?:device-project-grants|device-unapproved|totp)-e2e\.ts$/, ["identity", "security", "workflow", "sso-live"]],
   [/^scripts\/(?:audit-sandbox-dcr-orphans\.mjs|run-mcp-resource-oauth-postgres-e2e\.cjs)$/, ["identity", "security", "mcp-oauth", "workflow", "sso-live"]],
   [/^scripts\/(?:run-tenant-oidc-login-v2-e2e\.sh|tenant-oidc-login-v2-proxy\.cjs)$/, ["identity", "security", "workflow", "sso-live"]],
-  [/^test\/federation\/(?:docker-compose\.yml|zitadel-init-steps\.yaml)$/, ["identity", "security", "workflow", "sso-live"]],
+  [/^test\/federation\/(?:docker-compose\.yml|zitadel-init-steps\.yaml|zitadel-config\.yaml)$/, ["identity", "security", "workflow", "sso-live"]],
   [/^test\/tenant-oidc-login-v2\/(?:consent-e2e\.cjs|docker-compose\.yml|fail-safe-error(?:\.test)?\.cjs|smoke\.cjs)$/, ["identity", "security", "workflow", "sso-live"]],
   [/^test\/test-sandbox-dcr-audit\.test\.mjs$/, ["identity", "security", "mcp-oauth", "workflow", "sso-live"]],
   [/^\.github\/workflows\/tenant-oidc-(?:live|login-v2)\.yml$/, ["identity", "security", "workflow", "sso-live"]],
@@ -676,6 +676,9 @@ export function selectProfiles(paths) {
       profiles.has("gpu-security") ||
       profiles.has("swarm-smoke-fixtures") ||
       profiles.has("sso-live"),
+    // SEC-04: browser/device-consent proof is required for every release candidate.
+    // Never infer that auth is unaffected from a path allowlist (including deletions).
+    loginV2Required: true,
     capacitySmoke: profiles.has("capacity-smoke"),
     gpuSmoke: profiles.has("gpu-security"),
     changedPaths: [...paths],
@@ -719,6 +722,7 @@ if (process.argv[1]?.endsWith("fastfix-test-plan.mjs")) {
     `swarm_smoke=${plan.swarmSmoke}`,
     `gpu_smoke=${plan.gpuSmoke}`,
     `capacity_smoke=${plan.capacitySmoke}`,
+    `login_v2_required=${plan.loginV2Required}`,
     `federation_required=${plan.profiles.some((p) => ["identity", "mcp-oauth", "tenant-access", "security"].includes(p))}`,
     `installer_required=${plan.profiles.some((p) => ["installer", "platform-release", "runtime-config", "workflow"].includes(p))}`,
     "",

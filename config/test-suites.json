@@ -113,6 +113,17 @@
       "workflow": "federation-integration.yml"
     },
     {
+      "id": "tenant-oidc-login-v2",
+      "level": "e2e",
+      "domain": "identity",
+      "command": [
+        "bash",
+        "scripts/run-tenant-oidc-login-v2-e2e.sh"
+      ],
+      "environment": "workflow",
+      "workflow": "tenant-oidc-login-v2.yml"
+    },
+    {
       "id": "swarm",
       "level": "system",
       "domain": "infrastructure",

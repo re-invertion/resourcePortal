@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import {spawnSync} from 'node:child_process';
 import YAML from 'yaml';
 
 const load=(name)=>YAML.parse(readFileSync(new URL('../.github/workflows/'+name,import.meta.url),'utf8'));
 
 test('all RP GitHub workflow definitions parse as YAML with jobs',()=>{
-  for(const name of ['ci.yml','fastfix.yml','release.yml','swarm-integration.yml','federation-integration.yml','production-installer.yml','tenant-oidc-live.yml']){
+  for(const name of ['ci.yml','fastfix.yml','release.yml','swarm-integration.yml','federation-integration.yml','production-installer.yml','tenant-oidc-live.yml','tenant-oidc-login-v2.yml','release-readiness.yml']){
     const workflow=load(name);
     assert.ok(workflow.on,name);
     assert.ok(Object.keys(workflow.jobs).length>0,name);
@@ -212,7 +213,7 @@ test('Merge Queue requires full regression and applicable Fast Fix integration g
   const gate=load('release-readiness.yml');
   assert.ok('merge_group' in gate.on);
   assert.ok('pull_request' in gate.on);
-  assert.deepEqual(gate.jobs['release-ready'].needs,['candidate','swarm','capacity-docker29','federation','installer','tenant-oidc']);
+  assert.deepEqual(gate.jobs['release-ready'].needs,['candidate','swarm','capacity-docker29','federation','installer','tenant-oidc','login-v2']);
   const candidate=gate.jobs.candidate;
   assert.match(candidate.steps.find(s=>s.name?.startsWith('Validate all source')).if,/milestone/);
   const scoped=candidate.steps.find(s=>s.name?.startsWith('Validate affected patch'));
@@ -488,4 +489,77 @@ test('independent network dataplane is selected only for networking and mileston
   assert.equal(report.if,'always()');
   assert.equal(report['continue-on-error'],true);
   assert.match(report.run,/actions\/runs\/\$GITHUB_RUN_ID\/jobs/);
+});
+
+test('SEC-04 real Login V2 is a mandatory exact-candidate PR and merge-group dependency',()=>{
+  const readiness=load('release-readiness.yml'), live=load('tenant-oidc-login-v2.yml');
+  assert.ok('pull_request' in readiness.on);
+  assert.ok('merge_group' in readiness.on);
+  assert.equal(readiness.on.pull_request.paths,undefined);
+  assert.equal(readiness.on.merge_group,null);
+  assert.ok('pull_request' in live.on && 'workflow_dispatch' in live.on && 'workflow_call' in live.on);
+  const call=readiness.jobs['login-v2'], job=live.jobs['login-v2-disposable'];
+  assert.equal(call.uses,'./.github/workflows/tenant-oidc-login-v2.yml');
+  assert.equal(call.if,"github.event_name == 'merge_group' || github.event.pull_request.draft == false");
+  assert.deepEqual(call.permissions,{contents:'read'});
+  assert.equal(call.secrets,undefined);
+  assert.equal(call['continue-on-error'],undefined);
+  assert.equal(job.if,"github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository");
+  assert.equal(job['runs-on'],'ubuntu-24.04');
+  assert.equal(job.env.ZITADEL_VERSION,'v4.19.5');
+  assert.equal(job.env.RP_LOGIN_V2_E2E_ISOLATED,'true');
+  assert.equal(job['continue-on-error'],undefined);
+  const checkout=job.steps.find(step=>step.uses==='actions/checkout@v4');
+  assert.equal(checkout.with['persist-credentials'],false);
+  assert.equal(checkout.with.ref,'${{ github.sha }}');
+  const actual=job.steps.find(step=>step.id==='real-login-v2');
+  assert.equal(actual.if,undefined);
+  assert.equal(actual['continue-on-error'],undefined);
+  assert.match(actual.run,/set -euo pipefail/);
+  assert.match(actual.run,/git rev-parse HEAD/);
+  assert.ok(actual.run.indexOf('bash scripts/run-tenant-oidc-login-v2-e2e.sh')>=0);
+  assert.ok(actual.run.indexOf('bash scripts/run-tenant-oidc-login-v2-e2e.sh')<actual.run.indexOf('tested_sha='));
+  assert.ok(job.steps.some(step=>step.run?.includes('node --test test/tenant-oidc-login-v2/fail-safe-error.test.cjs')));
+  assert.equal(job.outputs.tested_sha,'${{ steps.real-login-v2.outputs.tested_sha }}');
+  assert.equal(live.on.workflow_call.outputs.tested_sha.value,'${{ jobs.login-v2-disposable.outputs.tested_sha }}');
+  assert.equal(readiness.jobs.candidate.outputs.login_v2_required,'${{ steps.test-plan.outputs.login_v2_required }}');
+  const final=readiness.jobs['release-ready'];
+  assert.equal(final.if,'always()');
+  assert.ok(final.needs.includes('login-v2'));
+  assert.equal(final.steps[0].env.LOGIN_V2,'${{ needs.login-v2.result }}');
+  assert.equal(final.steps[0].env.LOGIN_V2_TESTED_SHA,'${{ needs.login-v2.outputs.tested_sha }}');
+  assert.equal(final.steps[0].env.LOGIN_V2_REQUIRED,'${{ needs.candidate.outputs.login_v2_required }}');
+});
+
+test('SEC-04 executes actual final aggregation: missing, skipped, failed, cancelled or stale Login V2 fails closed',()=>{
+  const run=load('release-readiness.yml').jobs['release-ready'].steps[0].run;
+  const sha='a'.repeat(40);
+  const baseline={
+    CANDIDATE:'success',MODE:'fastfix',VPN_SMOKE:'false',SWARM_SMOKE:'false',
+    CAPACITY_SMOKE:'false',FEDERATION_REQUIRED:'false',INSTALLER_REQUIRED:'false',
+    SWARM:'skipped',CAPACITY:'skipped',FEDERATION:'skipped',INSTALLER:'skipped',TENANT_OIDC:'skipped',
+    LOGIN_V2_REQUIRED:'true',LOGIN_V2:'success',LOGIN_V2_TESTED_SHA:sha,GITHUB_SHA:sha,
+  };
+  for (const mode of ['fastfix','milestone']) {
+    const env={...baseline,MODE:mode};
+    if(mode==='milestone') Object.assign(env,{SWARM:'success',FEDERATION:'success',INSTALLER:'success',TENANT_OIDC:'success'});
+    const execute=(changes)=>spawnSync('bash',['-c',run],{encoding:'utf8',env:{...process.env,...env,...changes}});
+    const positive=execute({});
+    assert.equal(positive.status,0,positive.stderr);
+    for(const result of ['skipped','failure','cancelled','']) {
+      const bad=execute({LOGIN_V2:result});
+      assert.equal(bad.status,1,result);
+      assert.match(bad.stderr,/Required login-v2 gate not successful/);
+    }
+    for(const testedSha of ['', 'b'.repeat(40)]) {
+      const bad=execute({LOGIN_V2_TESTED_SHA:testedSha});
+      assert.equal(bad.status,1);
+      assert.match(bad.stderr,/Missing or mismatched Login V2 candidate evidence/);
+    }
+    for(const required of ['', 'false']) {
+      const bad=execute({LOGIN_V2_REQUIRED:required});
+      assert.equal(bad.status,1);
+      assert.match(bad.stderr,/Missing mandatory Login V2 test plan/);
+    }
+  }
 });

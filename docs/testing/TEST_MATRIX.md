@@ -46,6 +46,7 @@ Total detected test files: **461**.
 | installer | contract | installer | local |
 | cli-package | packaging | cli | local |
 | federation | e2e | identity | federation-integration.yml |
+| tenant-oidc-login-v2 | e2e | identity | tenant-oidc-login-v2.yml |
 | swarm | system | infrastructure | swarm-integration.yml |
 | lan-attachment | system | networking | swarm-integration.yml |
 | device-vpn | system | networking | swarm-integration.yml |
