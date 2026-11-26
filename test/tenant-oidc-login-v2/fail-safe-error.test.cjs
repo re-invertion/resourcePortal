@@ -22,3 +22,13 @@ test("no untrusted error detail reaches CI diagnostics", () => {
   assert.match(safe,/stage=device-explicit-allow; error=AssertionError/);
   assert.doesNotMatch(safe,/Bearer|secret|device_code/);
 });
+
+test("allow-path diagnostics identify only a static stage without leaking credentials", () => {
+  const secret = "SYNTHETIC-DEVICE-SECRET";
+  for (const stage of ["device-allow-request", "device-allow-entry", "device-allow-controls",
+    "device-allow-pending", "device-allow-decision", "device-allow-token-poll", "device-allow-token-verify"]) {
+    const line = safeFailureLine(stage, {name:"AssertionError",message:secret,stack:secret});
+    assert.equal(line, "BLOCKED: real isolated Login V2 consent E2E: stage=" + stage + "; error=AssertionError; details suppressed");
+    assert.ok(!line.includes(secret));
+  }
+});

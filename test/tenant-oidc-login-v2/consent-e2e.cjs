@@ -332,10 +332,10 @@ async function advanceDeviceCodeEntry(page, code) {
       new URL(page.url()).pathname);
     const allow=page.getByRole("button",{name:/^allow$|^approve$/i}).first();
     const deny=page.getByRole("button",{name:/^deny$|^reject$/i}).first();
-    assert.ok(await allow.isVisible().catch(()=>false),
-      "Real Login V2 consent page does not expose explicit Allow");
-    assert.ok(await deny.isVisible().catch(()=>false),
-      "Real Login V2 consent page does not expose explicit Deny");
+    // URL navigation may precede the hydrated Next.js controls. Wait for
+    // actual rendered decisions rather than sampling visibility once.
+    await allow.waitFor({state:"visible",timeout:15000});
+    await deny.waitFor({state:"visible",timeout:15000});
     await assertPending(discovery,deviceClientId,request.device_code);
     await page.waitForTimeout(6_000);
     await assertPending(discovery,deviceClientId,request.device_code);
@@ -351,9 +351,10 @@ async function advanceDeviceCodeEntry(page, code) {
     // Positive control on a *fresh* device code and this same authenticated
     // browser. Missing Login Client permissions, broken consent UI or broken
     // device token issuance MUST fail the test, not count as safe denial.
-    failureStage = "device-explicit-allow";
+    failureStage = "device-allow-request";
     const positive=await deviceRequest(discovery,deviceClientId);
     await assertPending(discovery,deviceClientId,positive.device_code);
+    failureStage = "device-allow-entry";
     await page.goto(positive.verification_uri_complete,{
       waitUntil:"domcontentloaded",timeout:45000,
     });
@@ -378,11 +379,18 @@ async function advanceDeviceCodeEntry(page, code) {
     }
     assert.ok(new URL(page.url()).pathname.includes("/ui/v2/login/device/consent"),
       "Second real Login V2 device consent page not reached");
+    failureStage = "device-allow-controls";
     const approve=page.getByRole("button",{name:/^allow$|^approve$/i}).first();
-    assert.ok(await approve.isVisible().catch(()=>false),
-      "Valid user cannot see the explicit Allow decision");
+    const rejectPositive=page.getByRole("button",{name:/^deny$|^reject$/i}).first();
+    await approve.waitFor({state:"visible",timeout:15000});
+    await rejectPositive.waitFor({state:"visible",timeout:15000});
+    failureStage = "device-allow-pending";
+    // Prove the fresh code is still unapproved after the consent UI loads.
+    await assertPending(discovery,deviceClientId,positive.device_code);
+    failureStage = "device-allow-decision";
     // One explicit UI click, never via API admin PAT; do not auto-approve.
-    await approve.click();
+    await approve.click({timeout:15000});
+    failureStage = "device-allow-token-poll";
     let approved;
     for(let attempt=0;attempt<5;attempt++){
       const result=await deviceToken(discovery,deviceClientId,positive.device_code);
@@ -394,6 +402,7 @@ async function advanceDeviceCodeEntry(page, code) {
     }
     assert.ok(approved?.access_token && approved?.id_token,
       "Real Login V2 Allow did not issue OAuth Device ID/access tokens");
+    failureStage = "device-allow-token-verify";
     assert.equal(approved.token_type?.toLowerCase(),"bearer");
     const { createRemoteJWKSet,jwtVerify }=await import("jose");
     const keyset=createRemoteJWKSet(new URL(discovery.jwks_uri));

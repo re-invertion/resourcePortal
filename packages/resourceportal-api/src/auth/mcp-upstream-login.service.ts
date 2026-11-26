@@ -99,12 +99,10 @@ export class McpUpstreamLoginService {
     // replicas, process restarts and ambiguous provider responses cannot
     // dispatch another first-registration for this tenant. Never put a
     // placeholder in McpOAuthUpstreamClient (the issuer's trusted allowlist).
-    const claimed = await this.prisma.$executeRaw`
-      INSERT INTO "McpOAuthUpstreamRegistration" ("tenantId", "status", "createdAt", "updatedAt")
-      VALUES (${tenantId}::uuid, 'Pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      ON CONFLICT ("tenantId") DO NOTHING
-    `;
-    if (claimed !== 1) {
+    const claimed = await this.prisma.mcpOAuthUpstreamRegistration.createMany({
+      data: { tenantId, status: "Pending" }, skipDuplicates: true,
+    });
+    if (claimed.count !== 1) {
       // A completed binding is authoritative; a pending/uncertain reservation
       // is never treated as proof and is not reset by a timer or request.
       const bound = await this.prisma.mcpOAuthUpstreamClient.findUnique({ where: { tenantId } });
@@ -184,12 +182,11 @@ export class McpUpstreamLoginService {
     try {
       await this.prisma.$transaction(async tx => {
         await tx.mcpOAuthUpstreamClient.create({ data: { tenantId, clientId } });
-        const updated = await tx.$executeRaw`
-          UPDATE "McpOAuthUpstreamRegistration"
-          SET "status" = 'Bound', "observedClientId" = ${clientId}, "updatedAt" = CURRENT_TIMESTAMP
-          WHERE "tenantId" = ${tenantId}::uuid
-        `;
-        if (updated !== 1) throw new Error("Missing durable MCP identity registration reservation");
+        const updated = await tx.mcpOAuthUpstreamRegistration.updateMany({
+          where: { tenantId, status: { in: ["Pending", "Uncertain"] } },
+          data: { status: "Bound", observedClientId: clientId },
+        });
+        if (updated.count !== 1) throw new Error("Missing durable MCP identity registration reservation");
       });
       return clientId;
     } catch {
@@ -206,12 +203,10 @@ export class McpUpstreamLoginService {
 
   private async markRegistrationUncertain(tenantId: string, clientId?: string) {
     try {
-      await this.prisma.$executeRaw`
-        UPDATE "McpOAuthUpstreamRegistration"
-        SET "status" = 'Uncertain', "observedClientId" = COALESCE(${clientId ?? null}, "observedClientId"),
-            "updatedAt" = CURRENT_TIMESTAMP
-        WHERE "tenantId" = ${tenantId}::uuid AND "status" <> 'Bound'
-      `;
+      await this.prisma.mcpOAuthUpstreamRegistration.updateMany({
+        where: { tenantId, status: { in: ["Pending", "Uncertain"] } },
+        data: { status: "Uncertain", ...(clientId === undefined ? {} : { observedClientId: clientId }) },
+      });
     } catch {
       // The initial committed Pending row is itself a permanent fail-closed
       // barrier. Do not mask the sanitized registration outcome with DB details.

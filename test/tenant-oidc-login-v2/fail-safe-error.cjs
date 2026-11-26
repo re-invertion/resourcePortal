@@ -5,6 +5,9 @@ const allowedStages = new Set([
   "initialization", "issuer-discovery", "synthetic-fixtures",
   "login-v2-pkce", "device-no-implicit-consent",
   "device-explicit-deny", "device-explicit-allow",
+  "device-allow-request", "device-allow-entry", "device-allow-controls",
+  "device-allow-pending", "device-allow-decision", "device-allow-token-poll",
+  "device-allow-token-verify",
 ]);
 const categories = new Set(["AssertionError", "TimeoutError", "TypeError"]);
 function safeFailureLine(stage, error) {

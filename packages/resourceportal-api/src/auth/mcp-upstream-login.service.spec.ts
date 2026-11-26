@@ -32,30 +32,31 @@ function fixture() {
   }>();
   let client: { tenantId: string; clientId: string } | null = null;
   const reservations = new Map<string, { status: string; observedClientId?: string }>();
-  const executeRaw = vi.fn((strings: TemplateStringsArray, ...values: unknown[]) => {
-    const sql = strings.join("?");
-    if (sql.includes("INSERT INTO")) {
-      const tenantId = String(values[0]);
-      if (reservations.has(tenantId)) return Promise.resolve(0);
-      reservations.set(tenantId, { status: "Pending" });
-      return Promise.resolve(1);
-    }
-    const tenantId = String(values[1]);
-    const reservation = reservations.get(tenantId);
-    if (!reservation) return Promise.resolve(0);
-    reservation.status = sql.includes("SET \"status\" = 'Bound'") ? "Bound" : "Uncertain";
-    if (typeof values[0] === "string") reservation.observedClientId = values[0];
-    return Promise.resolve(1);
-  });
+  const registration = {
+    createMany: vi.fn((args: { data: { tenantId: string; status: string }; skipDuplicates: boolean }) => {
+      expect(args.skipDuplicates).toBe(true);
+      if (reservations.has(args.data.tenantId)) return Promise.resolve({ count: 0 });
+      reservations.set(args.data.tenantId, { status: args.data.status });
+      return Promise.resolve({ count: 1 });
+    }),
+    updateMany: vi.fn((args: { where: { tenantId: string; status: { in: string[] } };
+      data: { status: string; observedClientId?: string } }) => {
+      const reservation = reservations.get(args.where.tenantId);
+      if (!reservation || !args.where.status.in.includes(reservation.status)) return Promise.resolve({ count: 0 });
+      reservation.status = args.data.status;
+      if (args.data.observedClientId !== undefined) reservation.observedClientId = args.data.observedClientId;
+      return Promise.resolve({ count: 1 });
+    }),
+  };
   const prisma = {
-    $executeRaw: executeRaw,
+    mcpOAuthUpstreamRegistration: registration,
     $transaction: vi.fn(async (fn: (tx: {
       mcpOAuthUpstreamClient: { create: (args: { data: { tenantId: string; clientId: string } }) =>
         Promise<{ tenantId: string; clientId: string }> };
-      $executeRaw: typeof executeRaw;
+      mcpOAuthUpstreamRegistration: typeof registration;
     }) => Promise<unknown>) => {
       const previous = client;
-      try { return await fn({ mcpOAuthUpstreamClient: prisma.mcpOAuthUpstreamClient, $executeRaw: executeRaw }); }
+      try { return await fn({ mcpOAuthUpstreamClient: prisma.mcpOAuthUpstreamClient, mcpOAuthUpstreamRegistration: registration }); }
       catch (error) { client = previous; throw error; }
     }),
     mcpOAuthUpstreamClient: {
@@ -282,7 +283,7 @@ describe("#442 MCP identity-only upstream OAuth PKCE, tenant scope and replay", 
 
   it("blocks registration when the durable reservation cannot be committed", async () => {
     const f = fixture();
-    f.prisma.$executeRaw.mockRejectedValueOnce(new Error("database unavailable"));
+    f.prisma.mcpOAuthUpstreamRegistration.createMany.mockRejectedValueOnce(new Error("database unavailable"));
     await expect(f.svc.start(input, origin)).rejects.toThrow();
     expect(f.transport).not.toHaveBeenCalled();
   });

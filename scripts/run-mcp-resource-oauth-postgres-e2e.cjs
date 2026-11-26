@@ -176,7 +176,10 @@ async function proveIdentityRegistrationReservation() {
   const encryption = { encrypt: () => "synthetic-sealed-verifier" };
   const replica = new PrismaClient();
   const makeService = db => new McpUpstreamLoginService(db, identityConfig, oidc, encryption);
-  const input = tenantId => ({ tenantId, clientId: "synthetic-rp-client", resource: resource(tenantId),
+  // Use the real RP registration service so the login row has a valid FK.
+  const registered = await oauth.registerClient({ redirect_uris: [callback],
+    grant_types: ["authorization_code", "refresh_token"], response_types: ["code"] });
+  const input = tenantId => ({ tenantId, clientId: registered.client_id, resource: resource(tenantId),
     redirectUri: callback, challenge, clientState: "synthetic-state", scope: "mcp offline_access" });
   const originalFetch = OidcIssuerTransport.prototype.fetch;
   let dispatched = 0;
