@@ -184,6 +184,8 @@ async function proveIdentityRegistrationReservation() {
     redirectUri: callback, challenge, clientState: "synthetic-state", scope: "mcp offline_access" });
   const originalFetch = OidcIssuerTransport.prototype.fetch;
   let dispatched = 0;
+  // Synthetic authoritative provider state for the accepted-but-lost response.
+  const providerClients = new Set();
   let release, entered, first;
   const barrier = new Promise(resolve => { release = resolve; });
   const started = new Promise(resolve => { entered = resolve; });
@@ -198,7 +200,15 @@ async function proveIdentityRegistrationReservation() {
         return Response.json({ client_id: "532000001", token_endpoint_auth_method: "none",
           redirect_uris: [origin + "/api/mcp/oauth/upstream/callback"] }, { status: 201 });
       }
-      if (dispatched === 2) throw new Error("synthetic response lost after possible acceptance");
+      if (dispatched === 2) {
+        providerClients.add("532000002");
+        throw new Error("synthetic response lost after possible acceptance");
+      }
+      if (dispatched === 3) {
+        providerClients.add("532000003");
+        return Response.json({ client_id: "532000003", token_endpoint_auth_method: "none",
+          redirect_uris: [origin + "/api/mcp/oauth/upstream/callback"] }, { status: 201 });
+      }
       throw new Error("unexpected duplicate registration POST");
     };
     first = makeService(prisma).start(input(A), origin);
@@ -224,6 +234,38 @@ async function proveIdentityRegistrationReservation() {
       assert.equal((await restarted.mcpOAuthUpstreamRegistration.findUnique({ where: { tenantId: B } })).status, "Uncertain");
       assert.equal(await restarted.mcpOAuthUpstreamClient.findUnique({ where: { tenantId: B } }), null);
       assert.equal(await restarted.mcpOAuthGrant.count(), 0);
+      // Exercise the documented operator-only recovery procedure in this
+      // disposable DB. The provider evidence is explicitly synthetic here;
+      // production requires independently verified scoped absence and drained
+      // replicas. There is intentionally no public reset endpoint.
+      assert.equal(providerClients.has("532000002"), true);
+      const reservation = await restarted.mcpOAuthUpstreamRegistration.findUnique({ where: { tenantId: B } });
+      assert.equal(reservation.observedClientId, null);
+      // The authorized test operator has correlated and removed the exact
+      // synthetic accepted client, then independently read back absence.
+      providerClients.delete("532000002");
+      assert.equal(providerClients.has("532000002"), false);
+      const boundBefore = await restarted.mcpOAuthUpstreamClient.findUnique({ where: { tenantId: A } });
+      const grantBefore = await restarted.mcpOAuthGrant.count();
+      await restarted.$transaction(async tx => {
+        await tx.$queryRaw`SELECT "id" FROM "Tenant" WHERE "id" = ${B}::uuid FOR UPDATE`;
+        assert.equal(await tx.mcpOAuthUpstreamClient.findUnique({ where: { tenantId: B } }), null);
+        const exact = { tenantId: B, status: reservation.status,
+          observedClientId: reservation.observedClientId, updatedAt: reservation.updatedAt };
+        const stale = await tx.mcpOAuthUpstreamRegistration.deleteMany({
+          where: { ...exact, updatedAt: new Date(reservation.updatedAt.getTime() - 1) },
+        });
+        assert.equal(stale.count, 0, "Stale evidence must not remove a reservation");
+        const removed = await tx.mcpOAuthUpstreamRegistration.deleteMany({ where: exact });
+        assert.equal(removed.count, 1, "Only the reconciled reservation may be removed");
+      });
+      await makeService(restarted).start(input(B), origin);
+      assert.equal(dispatched, 3, "Exactly one controlled registration after reconciliation");
+      assert.equal((await restarted.mcpOAuthUpstreamRegistration.findUnique({ where: { tenantId: B } })).status, "Bound");
+      assert.equal((await restarted.mcpOAuthUpstreamClient.findUnique({ where: { tenantId: B } })).clientId, "532000003");
+      assert.deepEqual(await restarted.mcpOAuthUpstreamClient.findUnique({ where: { tenantId: A } }), boundBefore);
+      assert.equal(await restarted.mcpOAuthGrant.count(), grantBefore);
+      console.log("PASS isolated PostgreSQL operator reconciliation CAS: synthetic provider absence, stale evidence rejection, one controlled retry and unrelated binding preservation");
     } finally { await restarted.$disconnect(); }
     console.log("PASS real PostgreSQL durable per-tenant identity DCR reservation: replica race, restart, uncertain outcome, no additional provider POST, no grant mutation");
   } finally {
