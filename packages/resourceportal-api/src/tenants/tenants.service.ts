@@ -1407,13 +1407,31 @@ export class TenantsService {
         where: { id: membershipId, tenantId }, include: this.membershipIncludes(),
       });
       if (!lockedMembership) throw new NotFoundException("TenantMembership not found");
-      // Authorize Owner changes against the same tenant-locked snapshot that
-      // is used for the mutation, never against a pre-transaction role read.
-      await this.assertOwnerRoleChangeAllowed(
-        tenantId, actor,
-        [...lockedMembership.roles.map(({ role }) => role.id), ...(dto.roleIds ?? [])],
-        tx,
-      );
+      // Recheck the actor's current effective RBAC while holding the same
+      // tenant lock as the mutation. Do not rely on the request guard's
+      // earlier authorization snapshot or on legacy Role.permissions arrays.
+      const permittedRole = {
+        id: { not: "sso-login" },
+        permissionBindings: { some: { permissionId: { in: ["membership.update", "*"] } } },
+      };
+      const liveActor = await tx.tenantMembership.findUnique({
+        where: {
+          userId_tenantId: { userId: actor.id, tenantId },
+          status: MembershipStatus.Active,
+          user: { status: UserStatus.Active },
+          OR: [
+            { roles: { some: { role: permittedRole } } },
+            { groupMemberships: { some: { group: { roles: { some: { role: permittedRole } } } } } },
+          ],
+        },
+        select: { roles: { select: { roleId: true } } },
+      });
+      if (!liveActor) throw new ForbiddenException("Current membership.update permission is required");
+      const changesOwner = lockedMembership.roles.some(({ role }) => role.id === TENANT_OWNER_ROLE_ID) ||
+        (dto.roleIds?.includes(TENANT_OWNER_ROLE_ID) ?? false);
+      if (changesOwner && !liveActor.roles.some(({ roleId }) => roleId === TENANT_OWNER_ROLE_ID)) {
+        throw new ForbiddenException("Only an active tenant owner can manage Owner roles");
+      }
       // The membership.update permission also permits managing one's own access.
       // Active Owners already hold tenant-wide privileges. Other administrators
       // may revoke/downgrade their own access, but cannot self-assign roles,
@@ -1659,10 +1677,9 @@ export class TenantsService {
     tenantId: string,
     actor: AuthenticatedUser,
     roleIds: string[],
-    client: Prisma.TransactionClient = this.prisma,
   ) {
     if (!roleIds.includes(TENANT_OWNER_ROLE_ID)) return;
-    const membership = await client.tenantMembership.findUnique({
+    const membership = await this.prisma.tenantMembership.findUnique({
       where: { userId_tenantId: { userId: actor.id, tenantId } },
       select: {
         status: true,
