@@ -271,8 +271,8 @@ async function proveMembershipReauthorization() {
         while (Date.now() < until) {
           const rows = await tx.$queryRaw`
             SELECT EXISTS (
-              SELECT 1 FROM pg_stat_activity
-              WHERE datname = current_database() AND pid <> pg_backend_pid()
+              SELECT 1 FROM pg_locks
+              WHERE NOT granted AND pid <> pg_backend_pid()
                 AND pg_backend_pid() = ANY(pg_blocking_pids(pid))
             ) AS blocked`;
           if (rows[0].blocked) { blocked = true; break; }
