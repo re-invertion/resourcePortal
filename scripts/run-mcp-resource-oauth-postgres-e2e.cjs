@@ -21,6 +21,7 @@ const { TenantMcpSettingsService } = require("../packages/resourceportal-api/dis
 const { TenantMcpAccessGuard } = require("../packages/resourceportal-api/dist/src/mcp/tenant-mcp-access.guard.js");
 const { TenantContextGuard } = require("../packages/resourceportal-api/dist/src/auth/tenant-context.guard.js");
 const { PermissionsGuard } = require("../packages/resourceportal-api/dist/src/auth/permissions.guard.js");
+const { TenantsService } = require("../packages/resourceportal-api/dist/src/tenants/tenants.service.js");
 
 const dbUrl = new URL(process.env.DATABASE_URL || "https://invalid.invalid/");
 assert.equal(process.env.GITHUB_ACTIONS, "true", "Requires GitHub Actions");
@@ -232,8 +233,82 @@ async function proveIdentityRegistrationReservation() {
     await replica.$disconnect();
   }
 }
+// Hold the actual tenant-row lock on one connection while a second service
+// waits to mutate a member. Verify that authorization is evaluated only after
+// the concurrent role change commits, not from the earlier guard snapshot.
+async function proveMembershipReauthorization() {
+  const roleId = "mcp-synthetic-membership-manager";
+  await prisma.permission.upsert({ where: { id: "membership.update" },
+    create: { id: "membership.update" }, update: {} });
+  await prisma.role.create({ data: {
+    id: roleId, name: "Synthetic membership manager", permissions: [],
+    permissionBindings: { create: [{ permissionId: "membership.update" }] },
+  } });
+  await prisma.membershipRole.create({ data: { membershipId: MAB, roleId } });
+  await prisma.role.upsert({ where: { id: "tenant-owner" },
+    create: { id: "tenant-owner", name: "Tenant Owner", permissions: [] }, update: {} });
+  const replica = new PrismaClient();
+  const service = new TenantsService(replica, {});
+  const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+  async function raceWhileLocked(change, expected) {
+    // The real guards must admit the original request before its role state changes.
+    const request = { params: { tenantId: B }, headers: {}, user: userA };
+    const ctx = context(request, ["membership.update"], "/memberships/" + MB);
+    await tenantGuard.canActivate(ctx);
+    assert.equal(permissionGuard.canActivate(ctx), true);
+    let queued;
+    try {
+      await prisma.$transaction(async tx => {
+        await tx.$queryRaw`SELECT "id" FROM "Tenant" WHERE "id" = ${B}::uuid FOR UPDATE`;
+        await change(tx);
+        queued = service.updateMembership(B, MB, { status: "Suspended" }, userA)
+          .then(() => ({ allowed: true }), error => ({ allowed: false, error }));
+        // Observe an actual blocked backend in this disposable database, not
+        // a sleep-based assumption about concurrency. The only other active
+        // operation is the membership mutation using the separate client.
+        const until = Date.now() + 3000;
+        let blocked = false;
+        while (Date.now() < until) {
+          const rows = await tx.$queryRaw`
+            SELECT EXISTS (
+              SELECT 1 FROM pg_stat_activity
+              WHERE datname = current_database() AND pid <> pg_backend_pid()
+                AND pg_backend_pid() = ANY(pg_blocking_pids(pid))
+            ) AS blocked`;
+          if (rows[0].blocked) { blocked = true; break; }
+          await pause(25);
+        }
+        assert.equal(blocked, true, "Second connection must wait on the tenant lock");
+      }, { timeout: 10000 });
+      const outcome = await queued;
+      assert.equal(outcome.allowed, false, "Stale authorization must not commit");
+      assert.match(outcome.error.message, expected);
+      assert.equal((await prisma.tenantMembership.findUnique({ where: { id: MB } })).status, "Active");
+      assert.equal(await prisma.auditLogEntry.count({ where: {
+        tenantId: B, action: "membership.update", resourceId: MB,
+      } }), 0, "Denied mutation must not create success audit");
+    } finally {
+      if (queued) await queued;
+    }
+  }
+  try {
+    await raceWhileLocked(tx => tx.membershipRole.deleteMany({
+      where: { membershipId: MAB, roleId },
+    }), /Current membership.update permission is required/);
+    await prisma.membershipRole.create({ data: { membershipId: MAB, roleId } });
+    await raceWhileLocked(tx => tx.membershipRole.create({
+      data: { membershipId: MB, roleId: "tenant-owner" },
+    }), /Only an active tenant owner can manage Owner roles/);
+    console.log("PASS real PostgreSQL membership authorization under tenant lock: revoked actor and newly promoted Owner target");
+  } finally {
+    await replica.$disconnect();
+    await prisma.membershipRole.deleteMany({ where: { membershipId: MB, roleId: "tenant-owner" } });
+    await prisma.membershipRole.deleteMany({ where: { membershipId: MAB, roleId } });
+  }
+}
 async function run() {
   await seed();
+  await proveMembershipReauthorization();
   await proveIdentityRegistrationReservation();
   const clientA = (await oauth.registerClient({ redirect_uris: [callback],
     grant_types: ["authorization_code", "refresh_token"], response_types: ["code"] })).client_id;
