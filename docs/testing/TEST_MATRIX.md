@@ -57,4 +57,3 @@ Total detected test files: **461**.
 | migration-compatibility | integration | database | local |
 
 Folders are migration-neutral: unit tests remain colocated with implementation. Infrastructure E2E and integration checks are listed by their workflow, not counted as individual test files.
-
