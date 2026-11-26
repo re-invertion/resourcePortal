@@ -116,15 +116,17 @@ const devicePolls=new Map();
 async function deviceToken(discovery,clientId,deviceCode) {
   const schedule=devicePolls.get(deviceCode);
   assert.ok(schedule,"Missing issued Device Code polling metadata");
-  const remaining=schedule.nextAt-Date.now();
-  if(remaining>0) await new Promise(resolve=>setTimeout(resolve,remaining));
-  const started=Date.now();
+  // Use monotonic time and schedule from response completion, not request
+  // dispatch. Include a small margin for provider/network clock granularity.
+  // Never poll earlier than the advertised RFC8628 interval.
+  const remaining=schedule.nextAt-performance.now();
+  if(remaining>0) await new Promise(resolve=>setTimeout(resolve,Math.ceil(remaining)));
   const result=await tokenRequest(discovery.token_endpoint,{
     grant_type:"urn:ietf:params:oauth:grant-type:device_code",
     client_id:clientId,device_code:deviceCode,
   });
   if(result.body.error==="slow_down") schedule.intervalMs+=5000;
-  schedule.nextAt=started+schedule.intervalMs;
+  schedule.nextAt=performance.now()+schedule.intervalMs+250;
   return result;
 }
 async function deviceRequest(discovery,clientId) {
@@ -139,7 +141,8 @@ async function deviceRequest(discovery,clientId) {
   assert.equal(new URL(info.verification_uri_complete).origin,issuer);
   const interval=info.interval===undefined?5:Number(info.interval);
   assert.ok(Number.isSafeInteger(interval)&&interval>0);
-  devicePolls.set(info.device_code,{intervalMs:interval*1000,nextAt:0});
+  devicePolls.set(info.device_code,{intervalMs:interval*1000,
+    nextAt:performance.now()+interval*1000+250});
   return info;
 }
 async function assertPending(discovery,clientId,code) {
@@ -150,81 +153,91 @@ async function assertPending(discovery,clientId,code) {
   assert.ok(!r.body.access_token&&!r.body.id_token&&!r.body.refresh_token,
     "SECURITY: OAuth tokens issued without explicit Login V2 device consent");
 }
-/**
- * Advance ONLY the Login V2 Device *code-entry* form, not a consent UI.
- * Verification URI may prefill the code before NextJS hydration; explicitly
- * fill a real code input to synchronize React state and wait for an enabled
- * Continue button. Never log user_code or manipulate Allow/Deny here.
- */
-async function advanceDeviceCodeEntry(page, code) {
-  assert.equal(new URL(page.url()).pathname, "/ui/v2/login/device");
-  assert.ok(code && /^[A-Za-z0-9-]+$/.test(code));
-  // The asynchronous Login V2 client may automatically navigate from
-  // device code entry to account selection before Playwright clicks. That
-  // transition is NOT consent: the outer loop must still reach consent,
-  // verify pending state and explicitly click Deny/Allow.
-  const movedToNextScreen = () => {
-    const uri = new URL(page.url());
-    assert.equal(uri.origin, issuer);
-    if (uri.pathname === "/ui/v2/login/device") return false;
-    assert.ok(uri.pathname.startsWith("/ui/v2/login/"),
-      "Device verification navigated outside the real Login V2 frontend");
-    return true;
-  };
-  // Wait for the Next.js client component to hydrate. A field populated
-  // from the verification_uri before hydration looks filled but its React
-  // form state has not yet validated the code (Continue remains disabled).
-  await page.waitForTimeout(750);
-  if (movedToNextScreen()) return;
-  const entry = page.locator([
-    'input[name*="code" i]',
-    'input[id*="code" i]',
-    'input[autocomplete="one-time-code"]',
-    'input[type="text"]',
-    'input:not([type])',
-  ].join(", ")).first();
-  if (await entry.count() && await entry.isVisible().catch(() => false)) {
-    // Some Login V2 versions prefill the code in HTML without hydrating the
-    // controlled React field. Replace, don't rely on untrusted prefill state.
-    await entry.fill("");
-    await entry.fill(code);
-    await entry.press("Tab");
-  } else {
-    // If the form is split into one-character inputs, enter only the actual
-    // synthetic code characters. All other layouts fail closed below.
-    const digits = page.locator('input[maxlength="1"]');
-    const plain = code.replace(/-/g, "");
-    if (await digits.count() === plain.length) {
-      for (let i=0;i<plain.length;i++) await digits.nth(i).fill(plain[i]);
-    }
-  }
-  if (movedToNextScreen()) return;
-  const next = page.getByRole("button",{name:/^(continue|verify|next)$/i}).first();
-  let enabled = false;
-  // The provider validates a real user_code asynchronously; never force-click
-  // a disabled control or count a static form as valid device authorization.
-  for (let attempt=0;attempt<40;attempt++) {
-    if (movedToNextScreen()) return;
-    const visible = await next.isVisible().catch(() => false);
-    enabled = visible && await next.isEnabled().catch(() => false);
-    if (enabled) break;
-    await page.waitForTimeout(250);
-  }
-  if (!enabled) {
-    const shape = await page.locator("input").evaluateAll(elements =>
-      elements.slice(0,12).map(e => ({
-        name:e.getAttribute("name"),type:e.getAttribute("type"),
-        id:e.getAttribute("id"),disabled:e.disabled,
-        length:e.value?.length??0,
-      })));
-    throw Error("Login V2 device code entry has no enabled Continue; inputs shape: "+
-      JSON.stringify(shape));
-  }
-  if (movedToNextScreen()) return;
-  await next.click({ timeout: 5_000 });
-  // No consent decision here. The next loop explicitly requires the real
-  // device consent screen and two separate Allow/Deny buttons.
+// Paths and data-testid values are the actual pinned v4.19.5 Login V2
+// component contract. Never construct a consent URL or approve through API.
+const devicePath="/ui/v2/login/device";
+const accountsPath="/ui/v2/login/accounts";
+const consentPath="/ui/v2/login/device/consent";
+const signedInPath="/ui/v2/login/signedin";
+
+function atRoute(page, path) {
+  const url=new URL(page.url());
+  return url.origin===issuer && url.pathname===path;
 }
+async function waitForRoute(page, paths, timeout=30000) {
+  await page.waitForURL(url=>url.origin===issuer && paths.includes(url.pathname),
+    {waitUntil:"domcontentloaded",timeout});
+}
+
+/**
+ * Use the code-entry form and the actual signed-in account button exactly
+ * once per screen. Next.js transitions may update URL before DOM or leave
+ * the old button attached briefly. Waiting for the next exact route after
+ * each single click prevents accidentally submitting a stale screen twice.
+ */
+async function reachDeviceConsent(page, request, username, scenario) {
+  failureStage="device-"+scenario+"-entry";
+  await page.goto(request.verification_uri_complete,{
+    waitUntil:"domcontentloaded",timeout:45000,
+  });
+  await waitForRoute(page,[devicePath,accountsPath,consentPath]);
+  if (atRoute(page,devicePath)) {
+    failureStage="device-"+scenario+"-code-form";
+    const field=page.getByTestId("code-text-input");
+    const submit=page.getByTestId("submit-button");
+    await field.waitFor({state:"visible",timeout:15000});
+    assert.ok(typeof request.user_code==="string" && /^[A-Za-z0-9-]+$/.test(request.user_code));
+    // Synchronize React form state with the actual issued code, using the
+    // pinned UI's named text field, never an arbitrary first input.
+    await field.fill("");
+    await field.fill(request.user_code);
+    await field.press("Tab");
+    assert.ok(atRoute(page,devicePath),"Code-entry route changed unexpectedly");
+    await submit.click({timeout:20000});
+    await waitForRoute(page,[accountsPath,consentPath]);
+  }
+  if (atRoute(page,accountsPath)) {
+    failureStage="device-"+scenario+"-account";
+    const account=page.getByRole("button",{name:new RegExp(username)});
+    await account.waitFor({state:"visible",timeout:15000});
+    assert.ok(atRoute(page,accountsPath),"Account picker route changed unexpectedly");
+    await account.click({timeout:15000});
+    await waitForRoute(page,[consentPath]);
+  }
+  failureStage="device-"+scenario+"-controls";
+  assert.ok(atRoute(page,consentPath),"Real authenticated consent route not reached");
+  const shown=page.getByTestId("user-code");
+  const allow=page.getByTestId("submit-button");
+  const deny=page.getByTestId("deny-button");
+  await shown.waitFor({state:"visible",timeout:15000});
+  // Assert the displayed RFC8628 user code belongs to THIS request; a
+  // previous consent page or stale SPA response cannot satisfy the test.
+  assert.equal((await shown.textContent())?.trim(),request.user_code);
+  await allow.waitFor({state:"visible",timeout:15000});
+  await deny.waitFor({state:"visible",timeout:15000});
+  assert.ok(await allow.isEnabled() && await deny.isEnabled(),"Consent controls unavailable");
+  return {allow,deny};
+}
+
+function assertNoDeviceTokens(result) {
+  assert.ok(!result.body.access_token&&!result.body.id_token&&!result.body.refresh_token,
+    "SECURITY: unexpected device token returned");
+}
+async function awaitDeviceDecision(discovery,clientId,deviceCode,decision) {
+  // Permit only bounded legitimate propagation/poll pacing states. Never
+  // retry the UI decision, accept invalid_grant, or treat a denial as Allow.
+  for(let attempt=0;attempt<6;attempt++){
+    const result=await deviceToken(discovery,clientId,deviceCode);
+    if(decision==="allow" && result.status===200) return result.body;
+    assert.equal(result.status,400,"Unexpected device token HTTP status");
+    assertNoDeviceTokens(result);
+    if(decision==="deny" && result.body.error==="access_denied") return;
+    assert.ok(["authorization_pending","slow_down"].includes(result.body.error),
+      "Unexpected terminal OAuth device state");
+  }
+  throw new Error("Explicit device decision did not settle within bounded polls");
+}
+
 (async () => {
   failureStage = "issuer-discovery";
   const discoveryResponse=await fetch(issuer+"/.well-known/openid-configuration",{
@@ -299,109 +312,53 @@ async function advanceDeviceCodeEntry(page, code) {
     const cookies=await context.cookies(issuer);
     assert.ok(cookies.length>0,"Successful Login V2 has no issuer browser session");
     console.log("PASS: genuine isolated Login V2 browser/password and signed Native PKCE session");
-    failureStage = "device-no-implicit-consent";
+    failureStage = "device-deny-request";
     const request=await deviceRequest(discovery,deviceClientId);
+    failureStage = "device-deny-initial-pending";
     await assertPending(discovery,deviceClientId,request.device_code);
-    await page.goto(request.verification_uri_complete,{
-      waitUntil:"domcontentloaded",timeout:45000,
-    });
-    for(let attempt=0;attempt<40;attempt++){
-      const current=new URL(page.url());
-      assert.equal(current.origin,issuer);
-      if(current.pathname.includes("/device/consent"))break;
-      // The actual Login V2 /device page requires Continue to submit the
-      // pre-filled user_code, *before* any account selection/consent page.
-      // Never click Allow here; only advance the code-entry state.
-      if(current.pathname==="/ui/v2/login/device"){
-        await advanceDeviceCodeEntry(page,request.user_code);continue;
-      }
-      if(current.pathname.includes("/accounts")){
-        const account=page.getByText(username,{exact:false}).first();
-        if(await account.isVisible().catch(()=>false)){
-          await account.click();continue;
-        }
-        const continueBtn=page.getByRole("button",{name:/continue/i}).first();
-        if(await continueBtn.isVisible().catch(()=>false)){
-          await continueBtn.click();continue;
-        }
-      }
-      await page.waitForTimeout(350);
-    }
-    assert.ok(new URL(page.url()).pathname.includes("/ui/v2/login/device/consent"),
-      "Real Login V2 device consent screen not reached: "+
-      new URL(page.url()).pathname);
-    const allow=page.getByRole("button",{name:/^allow$|^approve$/i}).first();
-    const deny=page.getByRole("button",{name:/^deny$|^reject$/i}).first();
-    // URL navigation may precede the hydrated Next.js controls. Wait for
-    // actual rendered decisions rather than sampling visibility once.
-    await allow.waitFor({state:"visible",timeout:15000});
-    await deny.waitFor({state:"visible",timeout:15000});
-    await assertPending(discovery,deviceClientId,request.device_code);
-    await page.waitForTimeout(6_000);
-    await assertPending(discovery,deviceClientId,request.device_code);
-    console.log("PASS: signed-in Login V2 Device consent screen visible; NO implicit approval or token on page view");
-    failureStage = "device-explicit-deny";
-    await deny.click();
-    const rejected=await deviceToken(discovery,deviceClientId,request.device_code);
-    assert.equal(rejected.status,400);
-    assert.equal(rejected.body.error,"access_denied",
-      "Explicit Login V2 Deny did not reject device authorization");
-    console.log("PASS: explicit Login V2 Deny rejects the original device code");
+    // Use a fresh page for each device journey, retaining the same authenticated
+    // browser context and provider-owned cookies; no manual cookie changes.
+    const denyPage=await context.newPage();
+    try {
+      const {deny}=await reachDeviceConsent(denyPage,request,username,"deny");
+      failureStage = "device-deny-visible-pending";
+      await assertPending(discovery,deviceClientId,request.device_code);
+      await denyPage.waitForTimeout(6_000);
+      failureStage = "device-deny-dwell-pending";
+      await assertPending(discovery,deviceClientId,request.device_code);
+      console.log("PASS: signed-in Login V2 Device consent screen visible; NO implicit approval or token on page view");
+      failureStage = "device-deny-decision";
+      await deny.click({timeout:15000});
+      // The pinned frontend deletes its deviceCodeCheck cookie and returns
+      // to code entry only after the actual denial server action succeeds.
+      await waitForRoute(denyPage,[devicePath]);
+      failureStage = "device-deny-token-poll";
+      await awaitDeviceDecision(discovery,deviceClientId,request.device_code,"deny");
+      console.log("PASS: explicit Login V2 Deny rejects the original device code");
+    } finally { await denyPage.close(); }
 
-    // Positive control on a *fresh* device code and this same authenticated
-    // browser. Missing Login Client permissions, broken consent UI or broken
-    // device token issuance MUST fail the test, not count as safe denial.
+    // Positive control on a fresh code with the same signed-in browser
+    // context. No administrative approval, silent consent or weakened JWT.
     failureStage = "device-allow-request";
     const positive=await deviceRequest(discovery,deviceClientId);
+    failureStage = "device-allow-initial-pending";
     await assertPending(discovery,deviceClientId,positive.device_code);
-    failureStage = "device-allow-entry";
-    await page.goto(positive.verification_uri_complete,{
-      waitUntil:"domcontentloaded",timeout:45000,
-    });
-    for(let attempt=0;attempt<40;attempt++){
-      const url=new URL(page.url());
-      assert.equal(url.origin,issuer);
-      if(url.pathname.includes("/ui/v2/login/device/consent"))break;
-      if(url.pathname==="/ui/v2/login/device"){
-        await advanceDeviceCodeEntry(page,positive.user_code);continue;
-      }
-      if(url.pathname.includes("/accounts")){
-        const account=page.getByText(username,{exact:false}).first();
-        if(await account.isVisible().catch(()=>false)){
-          await account.click();continue;
-        }
-        const continueButton=page.getByRole("button",{name:/continue/i}).first();
-        if(await continueButton.isVisible().catch(()=>false)){
-          await continueButton.click();continue;
-        }
-      }
-      await page.waitForTimeout(350);
-    }
-    assert.ok(new URL(page.url()).pathname.includes("/ui/v2/login/device/consent"),
-      "Second real Login V2 device consent page not reached");
-    failureStage = "device-allow-controls";
-    const approve=page.getByRole("button",{name:/^allow$|^approve$/i}).first();
-    const rejectPositive=page.getByRole("button",{name:/^deny$|^reject$/i}).first();
-    await approve.waitFor({state:"visible",timeout:15000});
-    await rejectPositive.waitFor({state:"visible",timeout:15000});
-    failureStage = "device-allow-pending";
-    // Prove the fresh code is still unapproved after the consent UI loads.
-    await assertPending(discovery,deviceClientId,positive.device_code);
-    failureStage = "device-allow-decision";
-    // One explicit UI click, never via API admin PAT; do not auto-approve.
-    await approve.click({timeout:15000});
-    failureStage = "device-allow-token-poll";
+    const allowPage=await context.newPage();
     let approved;
-    for(let attempt=0;attempt<5;attempt++){
-      const result=await deviceToken(discovery,deviceClientId,positive.device_code);
-      if(result.status===200){approved=result.body;break;}
-      assert.equal(result.status,400,
-        "Valid consent device exchange returned unexpected token HTTP status");
-      assert.ok(["authorization_pending","slow_down"].includes(result.body.error),
-        "Valid consent returned invalid OAuth state");
-    }
-    assert.ok(approved?.access_token && approved?.id_token,
-      "Real Login V2 Allow did not issue OAuth Device ID/access tokens");
+    try {
+      const {allow}=await reachDeviceConsent(allowPage,positive,username,"allow");
+      failureStage = "device-allow-pending";
+      await assertPending(discovery,deviceClientId,positive.device_code);
+      failureStage = "device-allow-decision";
+      await allow.click({timeout:15000});
+      // The pinned Login V2 approval action routes to signedin only after
+      // successful explicit provider authorization; fail on a login loop.
+      await waitForRoute(allowPage,[signedInPath]);
+      failureStage = "device-allow-token-poll";
+      approved=await awaitDeviceDecision(discovery,deviceClientId,positive.device_code,"allow");
+      assert.ok(approved?.access_token && approved?.id_token,
+        "Real Login V2 Allow did not issue OAuth Device ID/access tokens");
+    } finally { await allowPage.close(); }
     failureStage = "device-allow-token-verify";
     assert.equal(approved.token_type?.toLowerCase(),"bearer");
     const { createRemoteJWKSet,jwtVerify }=await import("jose");

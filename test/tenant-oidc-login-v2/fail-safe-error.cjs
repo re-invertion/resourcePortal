@@ -8,6 +8,11 @@ const allowedStages = new Set([
   "device-allow-request", "device-allow-entry", "device-allow-controls",
   "device-allow-pending", "device-allow-decision", "device-allow-token-poll",
   "device-allow-token-verify",
+  "device-deny-request", "device-deny-initial-pending", "device-deny-entry",
+  "device-deny-code-form", "device-deny-account", "device-deny-controls",
+  "device-deny-visible-pending", "device-deny-dwell-pending",
+  "device-deny-decision", "device-deny-token-poll",
+  "device-allow-initial-pending", "device-allow-code-form", "device-allow-account",
 ]);
 const categories = new Set(["AssertionError", "TimeoutError", "TypeError"]);
 function safeFailureLine(stage, error) {

@@ -32,3 +32,14 @@ test("allow-path diagnostics identify only a static stage without leaking creden
     assert.ok(!line.includes(secret));
   }
 });
+
+test("both device journeys expose only predefined checkpoint names", () => {
+  const marker = "SYNTHETIC-DEVICE-SECRET";
+  for (const stage of ["device-deny-request", "device-deny-initial-pending", "device-deny-entry",
+    "device-deny-code-form", "device-deny-account", "device-deny-controls",
+    "device-deny-visible-pending", "device-deny-dwell-pending", "device-deny-decision",
+    "device-deny-token-poll", "device-allow-initial-pending", "device-allow-code-form", "device-allow-account"]) {
+    assert.equal(safeFailureLine(stage,{name:"AssertionError",message:marker,stack:marker}),
+      "BLOCKED: real isolated Login V2 consent E2E: stage="+stage+"; error=AssertionError; details suppressed");
+  }
+});
