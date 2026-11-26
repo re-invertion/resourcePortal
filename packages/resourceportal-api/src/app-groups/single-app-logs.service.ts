@@ -66,7 +66,33 @@ const sensitiveKeys = new Set([
   "recoverycode", "recoverycodes", "totpsecret", "token", "secret",
 ]);
 const normalizeKey = (key: string) => key.toLowerCase().replace(/[^a-z0-9]/g, "");
-const sensitiveKey = (key: string) => sensitiveKeys.has(normalizeKey(key));
+/** Decode only for matching keys/assignments; never emit the decoded input. */
+function decodeForDetection(value: string): string {
+  for (let i = 0; i < 3; i++) {
+    const next = value
+      .replace(/\\u([a-f0-9]{4})/gi, (_, code: string) => String.fromCharCode(parseInt(code, 16)))
+      .replace(/\\(["'\\/])/g, "$1")
+      .replace(/%([a-f0-9]{2})/gi, (_, code: string) => String.fromCharCode(parseInt(code, 16)));
+    if (next === value) break;
+    value = next;
+  }
+  return value;
+}
+
+// Header maps are already masked wholesale. Apply the same policy to flattened
+// telemetry header namespaces, including indexed, camelCase and snake_case keys.
+const headerNamespace = /^(?:(?:https?|grpc|rpc|network|request|response|req|res|client|server|otel|attributes|metadata|log|event|upstream|downstream))*headers?/;
+function sensitiveKey(key: string): boolean {
+  const decoded = decodeForDetection(key);
+  const normalized = normalizeKey(decoded);
+  if (sensitiveKeys.has(normalized) || headerNamespace.test(normalized)) return true;
+  // Match complete namespace components, not arbitrary suffixes such as the
+  // "code" in status_code. Keep ordinary status/method diagnostics intact.
+  const components = decoded.split(/[./:[\]\\]+/).map(normalizeKey).filter(Boolean);
+  while (components.length && /^\d+$/.test(components[components.length - 1])) components.pop();
+  return components.some(part => headerNamespace.test(part)) ||
+    (components.length > 0 && sensitiveKeys.has(components[components.length - 1]));
+}
 // Match field assignments after unescaping only for detection. Never emit a
 // decoded diagnostic which might reveal credentials not present in the input.
 const fieldAssignment = /(?:^|[^a-z0-9])(?:["']?)(authorization|proxy[-_ ]?authorization|(?:set[-_ ]?)?cookie|(?:request[-_ ]?|response[-_ ]?)?headers|access[-_ ]?token|refresh[-_ ]?token|id[-_ ]?token|registration[-_ ]?(?:access[-_ ]?)?token|device[-_ ]?code|user[-_ ]?code|code[-_ ]?verifier|client[-_ ]?secret|authorization[-_ ]?code|code|state|session[-_ ]?(?:state|token)|nonce|code[-_ ]?challenge|password|recovery[-_ ]?codes?|totp[-_ ]?secret|token|secret)["']?\s*[:=]\s*/gi;
@@ -112,6 +138,13 @@ function redactValue(value: unknown, depth: number): unknown {
 }
 
 function redactText(line: string): string {
+  // Unstructured flattened headers may use bracket, dotted, or encoded field
+  // names. Suppress the whole record when boundaries are ambiguous instead of
+  // guessing where an opaque header value ends.
+  const qualifiedAssignments = /(?:^|[\s,{;?&])(?:["']?)([a-z0-9_./[\]"'_-]+)["']?\s*[:=]/gi;
+  for (const match of decodeForDetection(line).matchAll(qualifiedAssignments)) {
+    if (sensitiveKey(match[1]) && !sensitiveKeys.has(normalizeKey(match[1]))) return redacted;
+  }
   const cleaned = line
     .replace(
       /(\/(?:oauth2\/callback|api\/auth\/callback|api\/mcp\/oauth\/upstream\/callback|oauth\/v2\/authorize))\?[^\s"'<>]+/gi,
@@ -126,15 +159,7 @@ function redactText(line: string): string {
   // Permit the explicitly masked ordinary query/header forms only. For
   // escaped/encoded keys, ambiguous assignments, or header fragments, redact
   // the whole diagnostic. Don't use a single regex to guess JSON boundaries.
-  let decoded = cleaned;
-  for (let i = 0; i < 3; i++) {
-    const next = decoded
-      .replace(/\\u([a-f0-9]{4})/gi, (_, code: string) => String.fromCharCode(parseInt(code, 16)))
-      .replace(/\\(["'\\/])/g, "$1")
-      .replace(/%([a-f0-9]{2})/gi, (_, code: string) => String.fromCharCode(parseInt(code, 16)));
-    if (next === decoded) break;
-    decoded = next;
-  }
+  const decoded = decodeForDetection(cleaned);
   for (const match of decoded.matchAll(fieldAssignment)) {
     const tail = decoded.slice((match.index ?? 0) + match[0].length);
     if (!/^(?:(?:Bearer|Basic)\s+)?\[REDACTED\](?:$|[\s&#,"'<>\\}\]])/i.test(tail)) return redacted;

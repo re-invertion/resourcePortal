@@ -98,6 +98,52 @@ describe("SingleAppLogsService", () => {
     expect(output).toContain("ordinary log message");
   });
 
+  it("redacts fully qualified, flattened, encoded and bracketed credential keys", async () => {
+    const { service } = fixture();
+    const fields = {
+      "http.request.headers.cookie": "QUALIFIED_COOKIE",
+      "HTTP.Response.Header.Set-Cookie": "QUALIFIED_SET_COOKIE",
+      "http.request.header.authorization": "QUALIFIED_AUTH",
+      "http.request.headers.cookie[0]": "INDEXED_COOKIE",
+      'http.request.headers["Cookie"]': "BRACKET_COOKIE",
+      httpRequestHeadersCookie: "CAMEL_COOKIE",
+      http_response_headers_set_cookie: "SNAKE_COOKIE",
+      "http%2Erequest%2Eheaders%2Ecookie": "ENCODED_COOKIE",
+      "http\\u002erequest\\u002eheaders\\u002ecookie": "ESCAPED_COOKIE_KEY",
+      "otel.attributes.http.request.headers": { custom: "HEADER_CONTAINER" },
+      "oauth.response.access_token": "QUALIFIED_ACCESS",
+      "oidc/device_code": "QUALIFIED_DEVICE",
+      "http.response.status_code": 401,
+      "http.request.method": "GET",
+      "message": "ordinary diagnostic",
+    };
+    const lines = [
+      JSON.stringify(fields),
+      JSON.stringify({ nested: JSON.stringify({ "http.request.headers.cookie": "NESTED_QUALIFIED" }) }),
+      JSON.stringify({ pairs: [{ name: "http.request.headers.cookie", value: "QUALIFIED_PAIR" },
+        ["http.response.headers.set-cookie", "QUALIFIED_TUPLE"]] }),
+      'http.request.headers.cookie=RAW_QUALIFIED_COOKIE',
+      'http_request_headers_cookie: RAW_SNAKE_COOKIE',
+      'http.request.headers["Cookie"]=RAW_BRACKET_COOKIE',
+      'fragment {"http.request.headers.cookie":"MALFORMED_QUALIFIED',
+      'http%2Erequest%2Eheaders%2Ecookie=RAW_ENCODED_COOKIE',
+    ];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ lines }) }));
+    const result = await service.list("tenant", "group", "app");
+    const output = result.lines.join("\n");
+    for (const secret of ["QUALIFIED_COOKIE", "QUALIFIED_SET_COOKIE", "QUALIFIED_AUTH", "INDEXED_COOKIE",
+      "BRACKET_COOKIE", "CAMEL_COOKIE", "SNAKE_COOKIE", "ENCODED_COOKIE", "ESCAPED_COOKIE_KEY",
+      "HEADER_CONTAINER", "QUALIFIED_ACCESS", "QUALIFIED_DEVICE", "NESTED_QUALIFIED", "QUALIFIED_PAIR",
+      "QUALIFIED_TUPLE", "RAW_QUALIFIED_COOKIE", "RAW_SNAKE_COOKIE", "RAW_BRACKET_COOKIE",
+      "MALFORMED_QUALIFIED", "RAW_ENCODED_COOKIE"]) expect(output).not.toContain(secret);
+    expect(JSON.parse(result.lines[0]) as unknown).toMatchObject({
+      "http.request.headers.cookie": "[REDACTED]",
+      "http.response.status_code": 401,
+      "http.request.method": "GET",
+      message: "ordinary diagnostic",
+    });
+  });
+
   it("caps the response to 64KiB", async () => {
     const { service } = fixture();
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve ({ lines: ["x".repeat(100000)] }) }));
