@@ -94,6 +94,9 @@ export class McpUpstreamLoginService {
     // Canonical RP origin validation happens before attempting the POST;
     // local configuration failures are not uncertain upstream mutations.
     const callbackUri = this.callback(origin);
+    // Construct and validate the transport before the durable reservation.
+    // A deterministic local TLS/issuer configuration error cannot have sent a POST.
+    const transport = this.transport();
     // Persist a unique, non-expiring reservation BEFORE the external side
     // effect. PostgreSQL commits this statement before the network call, so
     // replicas, process restarts and ambiguous provider responses cannot
@@ -118,7 +121,7 @@ export class McpUpstreamLoginService {
     if (bound) return bound.clientId;
     let response: Response;
     try {
-      response = await this.transport().fetch(discovery.registrationEndpoint, "registration", {
+      response = await transport.fetch(discovery.registrationEndpoint, "registration", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
