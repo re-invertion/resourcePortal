@@ -1,6 +1,7 @@
 import { ResourcePortalClient } from "@resource-portal/sdk";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -77,8 +78,23 @@ export function readConfig(): CliConfig {
 
 export function writeConfig(config: CliConfig) {
   const path = configPath();
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  const directory = dirname(path);
+  // Refresh tokens must never be written into an inherited world-readable
+  // config file. Restrict the existing directory before creating the file,
+  // and atomically replace the old inode instead of following a symlink.
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  chmodSync(directory, 0o700);
+  const temporaryPath = join(directory, `.config-${randomUUID()}.tmp`);
+  try {
+    writeFileSync(temporaryPath, `${JSON.stringify(config, null, 2)}\n`, {
+      mode: 0o600,
+      flag: "wx",
+    });
+    renameSync(temporaryPath, path);
+    chmodSync(path, 0o600);
+  } finally {
+    if (existsSync(temporaryPath)) rmSync(temporaryPath);
+  }
 }
 
 export function clearConfig() {
@@ -115,7 +131,9 @@ export async function logout(): Promise<{ status: "LoggedOut"; warning?: string 
     if (config.auth?.revocationEndpoint && config.auth.clientId) {
       const token = config.auth.refreshToken ?? config.token;
       if (token) {
-        const response = await fetch(config.auth.revocationEndpoint, {
+        const endpoint = trustedOidcEndpoint(config.auth.issuer, config.auth.revocationEndpoint, config.apiUrl ?? "");
+        const response = await fetch(endpoint, {
+          redirect: "error",
           signal: AbortSignal.timeout(10_000),
           method: "POST",
           headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -184,7 +202,9 @@ async function refreshDeviceAuth(
   configuredApiUrl: string | undefined,
   auth: CliAuthMetadata,
 ): Promise<{ token: string }> {
-  const response = await fetch(auth.tokenEndpoint, {
+  const endpoint = trustedOidcEndpoint(auth.issuer, auth.tokenEndpoint, apiUrl);
+  const response = await fetch(endpoint, {
+    redirect: "error",
     signal: AbortSignal.timeout(10_000),
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -250,8 +270,12 @@ export async function interactiveLogin(
   const normalizedApiUrl = normalizeApiUrl(apiUrl);
   const runtime = runtimeWithDefaults(overrides);
   const cliConfig = await fetchCliAuthConfig(normalizedApiUrl);
-  const discovery = await fetchOidcDiscovery(cliConfig.issuer);
+  const discovery = await fetchOidcDiscovery(cliConfig.issuer, normalizedApiUrl);
   const device = await requestDeviceAuthorization(discovery, cliConfig);
+  trustedOidcEndpoint(cliConfig.issuer, device.verification_uri, normalizedApiUrl, true);
+  if (device.verification_uri_complete) {
+    trustedOidcEndpoint(cliConfig.issuer, device.verification_uri_complete, normalizedApiUrl, true);
+  }
 
   runtime.log(`Open: ${device.verification_uri}`);
   runtime.log(`Code: ${device.user_code}`);
@@ -297,7 +321,8 @@ function normalizeApiUrl(apiUrl: string) {
 }
 
 async function fetchCliAuthConfig(apiUrl: string): Promise<CliAuthConfigResponse> {
-  const response = await fetch(`${apiUrl}/auth/cli-config`, { signal: AbortSignal.timeout(10_000) });
+  assertSecureAuthUrl(apiUrl, apiUrl);
+  const response = await fetch(`${apiUrl}/auth/cli-config`, { redirect: "error", signal: AbortSignal.timeout(10_000) });
   const payload = await responseJson(response, "Resource Portal CLI authentication configuration is invalid");
   if (!response.ok) {
     throw new Error(`Resource Portal CLI authentication is unavailable (HTTP ${response.status})`);
@@ -317,14 +342,44 @@ async function fetchCliAuthConfig(apiUrl: string): Promise<CliAuthConfigResponse
   return { issuer: issuer.replace(/\/+$/, ""), clientId, scopes };
 }
 
-async function fetchOidcDiscovery(issuer: string): Promise<OidcDiscoveryResponse> {
-  const response = await fetch(`${issuer}/.well-known/openid-configuration`, { signal: AbortSignal.timeout(10_000) });
+// OAuth credentials must remain inside the configured issuer's trust boundary.
+// Plain HTTP is permitted only for an explicitly local API and loopback issuer.
+function isLoopback(url: URL): boolean {
+  return ["127.0.0.1", "[::1]", "localhost"].includes(url.hostname);
+}
+
+function assertSecureAuthUrl(raw: string, apiUrl: string): URL {
+  try {
+    const url = new URL(raw);
+    const api = new URL(apiUrl);
+    const localHttp = url.protocol === "http:" && isLoopback(url) &&
+      api.protocol === "http:" && isLoopback(api);
+    if ((url.protocol !== "https:" && !localHttp) ||
+        url.username || url.password || url.hash) throw new Error();
+    return url;
+  } catch {
+    throw new Error("Untrusted OAuth endpoint URL");
+  }
+}
+
+function trustedOidcEndpoint(issuer: string, endpoint: string, apiUrl: string, allowQuery = false): string {
+  const trusted = assertSecureAuthUrl(issuer, apiUrl);
+  const target = assertSecureAuthUrl(endpoint, apiUrl);
+  if (trusted.search || target.origin !== trusted.origin || (!allowQuery && target.search)) {
+    throw new Error("Untrusted OAuth endpoint URL");
+  }
+  return target.href;
+}
+
+async function fetchOidcDiscovery(issuer: string, apiUrl: string): Promise<OidcDiscoveryResponse> {
+  const endpoint = trustedOidcEndpoint(issuer, `${issuer}/.well-known/openid-configuration`, apiUrl);
+  const response = await fetch(endpoint, { redirect: "error", signal: AbortSignal.timeout(10_000) });
   const payload = await responseJson(response, "OIDC discovery document is invalid");
   if (!response.ok || !isRecord(payload)) {
     throw new Error("OIDC discovery document is unavailable");
   }
   const discoveredIssuer = nonEmptyString(payload.issuer);
-  if (discoveredIssuer && discoveredIssuer.replace(/\/+$/, "") !== issuer) {
+  if (!discoveredIssuer || discoveredIssuer.replace(/\/+$/, "") !== issuer) {
     throw new Error("OIDC discovery issuer mismatch");
   }
   const deviceAuthorizationEndpoint = nonEmptyString(payload.device_authorization_endpoint);
@@ -335,9 +390,9 @@ async function fetchOidcDiscovery(issuer: string): Promise<OidcDiscoveryResponse
   const revocationEndpoint = nonEmptyString(payload.revocation_endpoint);
   return {
     issuer: discoveredIssuer,
-    deviceAuthorizationEndpoint,
-    tokenEndpoint,
-    ...(revocationEndpoint ? { revocationEndpoint } : {}),
+    deviceAuthorizationEndpoint: trustedOidcEndpoint(issuer, deviceAuthorizationEndpoint, apiUrl),
+    tokenEndpoint: trustedOidcEndpoint(issuer, tokenEndpoint, apiUrl),
+    ...(revocationEndpoint ? { revocationEndpoint: trustedOidcEndpoint(issuer, revocationEndpoint, apiUrl) } : {}),
   };
 }
 
@@ -346,6 +401,7 @@ async function requestDeviceAuthorization(
   cliConfig: CliAuthConfigResponse,
 ): Promise<DeviceAuthorizationResponse> {
   const response = await fetch(discovery.deviceAuthorizationEndpoint, {
+    redirect: "error",
     signal: AbortSignal.timeout(10_000),
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -393,6 +449,7 @@ async function pollDeviceToken(
       break;
     }
     const response = await fetch(discovery.tokenEndpoint, {
+      redirect: "error",
       signal: AbortSignal.timeout(Math.max(1, Math.min(10_000, deadline - runtime.now()))),
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -434,7 +491,9 @@ function parseDeviceToken(payload: unknown): DeviceTokenResponse {
   const tokenType = nonEmptyString(payload.token_type);
   const expiresIn = positiveNumber(payload.expires_in);
   const refreshToken = nonEmptyString(payload.refresh_token);
-  if (!accessToken || !tokenType) {
+  // ResourcePortal's API only accepts bearer tokens. A proof-of-possession
+  // token (e.g. DPoP) must never be silently sent as Authorization: Bearer.
+  if (!accessToken || tokenType?.toLowerCase() !== "bearer") {
     throw new Error("OIDC token endpoint returned malformed data");
   }
   return {
@@ -446,6 +505,7 @@ function parseDeviceToken(payload: unknown): DeviceTokenResponse {
 }
 
 async function validateResourcePortalToken(apiUrl: string, token: string) {
+  assertSecureAuthUrl(apiUrl, apiUrl);
   const client = new ResourcePortalClient({ apiUrl, token });
   await client.account.me();
 }

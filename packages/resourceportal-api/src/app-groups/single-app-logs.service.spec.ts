@@ -45,6 +45,105 @@ describe("SingleAppLogsService", () => {
     await expect(service.list("tenant", "group", "app")).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 
+  it("redacts OAuth callback codes, state, authorization headers and cookies before exposing logs", async () => {
+    const { service } = fixture();
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ lines: [
+      "2026-11-20 GET /oauth2/callback?code=SECRET_CODE&state=SECRET_STATE status=500",
+      "GET /api/auth/callback?code=OTHER_CODE&state=OTHER_STATE 302",
+      "GET /oauth/v2/authorize?state=THIRD_STATE&nonce=NONCE&code_challenge=CHALLENGE",
+      "GET /path?client_id=public-client&access_token=SECRET_ACCESS status=401",
+      "Authorization: Bearer SECRET_BEARER",
+      "Cookie: rp_session=SECRET_COOKIE",
+      "GET /oauth2/callback?code=ESC_CODE\\u0026state=ESC_STATE status=401",
+      "GET /path?refresh_token=ESC_REFRESH&amp;client_id=public-client status=403",
+      "normal healthz status=200",
+    ] }) });
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await service.list("tenant", "group", "app");
+    const output = result.lines.join("\n");
+    for (const secret of ["SECRET_CODE", "SECRET_STATE", "OTHER_CODE", "OTHER_STATE",
+      "THIRD_STATE", "NONCE", "CHALLENGE", "SECRET_ACCESS", "SECRET_BEARER", "SECRET_COOKIE", "ESC_CODE", "ESC_STATE", "ESC_REFRESH"]) {
+      expect(output).not.toContain(secret);
+    }
+    expect(output).toContain("/oauth2/callback?[REDACTED]");
+    expect(output).toContain("client_id=public-client&access_token=[REDACTED]");
+    expect(output).toContain("normal healthz status=200");
+    expect(output).toContain("status=500");
+  });
+
+  it("redacts structured, nested, escaped and non-query OAuth credentials", async () => {
+    const { service } = fixture();
+    const lines = [
+      JSON.stringify({ status: 401, headers: { AUTHORIZATION: "Bearer JSON_BEARER", cookie: "JSON_COOKIE" },
+        response: { accessToken: "JSON_ACCESS", registration_access_token: "JSON_REG", device_code: "JSON_DEVICE" },
+        nested: JSON.stringify({ refresh_token: "NESTED_REFRESH", userCode: "NESTED_USER" }) }),
+      '2026-11-26 ' + JSON.stringify({ event: "auth", payload: [{ name: "Set-Cookie", value: "HEADER_PAIR" },
+        ["Authorization", "Bearer TUPLE_HEADER"], { CLIENT_SECRET: "CLIENT_FIELD" }] }),
+      'diagnostic {"access_token":"BROKEN_JSON',
+      'fragment \\"registration_access_token\\":\\"ESCAPED_REG\\"',
+      'GET /path?%61ccess%5Ftoken=ENCODED_TOKEN',
+      'device_code=DEVICE_FIELD user_code=USER_FIELD',
+      'token: FREE_FORM',
+      'Bearer UNLABELED_BEARER',
+      JSON.stringify({ status: 200, message: "ordinary log message" }),
+    ];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ lines }) }));
+    const output = (await service.list("tenant", "group", "app")).lines.join("\n");
+    for (const secret of ["JSON_BEARER", "JSON_COOKIE", "JSON_ACCESS", "JSON_REG", "JSON_DEVICE",
+      "NESTED_REFRESH", "NESTED_USER", "HEADER_PAIR", "TUPLE_HEADER", "CLIENT_FIELD", "BROKEN_JSON",
+      "ESCAPED_REG", "ENCODED_TOKEN", "DEVICE_FIELD", "USER_FIELD", "FREE_FORM", "UNLABELED_BEARER"]) {
+      expect(output).not.toContain(secret);
+    }
+    expect(output).toContain('"status":401');
+    expect(output).toContain("ordinary log message");
+  });
+
+  it("redacts fully qualified, flattened, encoded and bracketed credential keys", async () => {
+    const { service } = fixture();
+    const fields = {
+      "http.request.headers.cookie": "QUALIFIED_COOKIE",
+      "HTTP.Response.Header.Set-Cookie": "QUALIFIED_SET_COOKIE",
+      "http.request.header.authorization": "QUALIFIED_AUTH",
+      "http.request.headers.cookie[0]": "INDEXED_COOKIE",
+      'http.request.headers["Cookie"]': "BRACKET_COOKIE",
+      httpRequestHeadersCookie: "CAMEL_COOKIE",
+      http_response_headers_set_cookie: "SNAKE_COOKIE",
+      "http%2Erequest%2Eheaders%2Ecookie": "ENCODED_COOKIE",
+      "http\\u002erequest\\u002eheaders\\u002ecookie": "ESCAPED_COOKIE_KEY",
+      "otel.attributes.http.request.headers": { custom: "HEADER_CONTAINER" },
+      "oauth.response.access_token": "QUALIFIED_ACCESS",
+      "oidc/device_code": "QUALIFIED_DEVICE",
+      "http.response.status_code": 401,
+      "http.request.method": "GET",
+      "message": "ordinary diagnostic",
+    };
+    const lines = [
+      JSON.stringify(fields),
+      JSON.stringify({ nested: JSON.stringify({ "http.request.headers.cookie": "NESTED_QUALIFIED" }) }),
+      JSON.stringify({ pairs: [{ name: "http.request.headers.cookie", value: "QUALIFIED_PAIR" },
+        ["http.response.headers.set-cookie", "QUALIFIED_TUPLE"]] }),
+      'http.request.headers.cookie=RAW_QUALIFIED_COOKIE',
+      'http_request_headers_cookie: RAW_SNAKE_COOKIE',
+      'http.request.headers["Cookie"]=RAW_BRACKET_COOKIE',
+      'fragment {"http.request.headers.cookie":"MALFORMED_QUALIFIED',
+      'http%2Erequest%2Eheaders%2Ecookie=RAW_ENCODED_COOKIE',
+    ];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ lines }) }));
+    const result = await service.list("tenant", "group", "app");
+    const output = result.lines.join("\n");
+    for (const secret of ["QUALIFIED_COOKIE", "QUALIFIED_SET_COOKIE", "QUALIFIED_AUTH", "INDEXED_COOKIE",
+      "BRACKET_COOKIE", "CAMEL_COOKIE", "SNAKE_COOKIE", "ENCODED_COOKIE", "ESCAPED_COOKIE_KEY",
+      "HEADER_CONTAINER", "QUALIFIED_ACCESS", "QUALIFIED_DEVICE", "NESTED_QUALIFIED", "QUALIFIED_PAIR",
+      "QUALIFIED_TUPLE", "RAW_QUALIFIED_COOKIE", "RAW_SNAKE_COOKIE", "RAW_BRACKET_COOKIE",
+      "MALFORMED_QUALIFIED", "RAW_ENCODED_COOKIE"]) expect(output).not.toContain(secret);
+    expect(JSON.parse(result.lines[0]) as unknown).toMatchObject({
+      "http.request.headers.cookie": "[REDACTED]",
+      "http.response.status_code": 401,
+      "http.request.method": "GET",
+      message: "ordinary diagnostic",
+    });
+  });
+
   it("caps the response to 64KiB", async () => {
     const { service } = fixture();
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve ({ lines: ["x".repeat(100000)] }) }));

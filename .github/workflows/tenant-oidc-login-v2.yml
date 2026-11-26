@@ -1,0 +1,55 @@
+name: ResourcePortal Isolated ZITADEL Login V2 Preflight
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tenant-oidc-login-v2.yml'
+      - 'test/tenant-oidc-login-v2/**'
+      - 'scripts/tenant-oidc-login-v2-proxy.cjs'
+      - 'scripts/run-tenant-oidc-login-v2-e2e.sh'
+      - 'test/federation/zitadel-config.yaml'
+      - 'test/federation/zitadel-init-steps.yaml'
+      - 'test/federation/docker-compose.yml'
+  workflow_dispatch:
+  workflow_call:
+    outputs:
+      tested_sha:
+        description: Exact candidate SHA that passed the real Login V2 regression
+        value: ${{ jobs.login-v2-disposable.outputs.tested_sha }}
+
+permissions:
+  contents: read
+
+jobs:
+  login-v2-disposable:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    outputs:
+      tested_sha: ${{ steps.real-login-v2.outputs.tested_sha }}
+    env:
+      RP_LOGIN_V2_E2E_ISOLATED: 'true'
+      ZITADEL_VERSION: v4.19.5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install exact Playwright dependencies
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+      - name: Assert OAuth secrets cannot leak through Login V2 browser failures
+        run: node --test test/tenant-oidc-login-v2/fail-safe-error.test.cjs
+      - name: Run real Login V2 browser PKCE and explicit device consent regression
+        id: real-login-v2
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          bash scripts/run-tenant-oidc-login-v2-e2e.sh
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          printf 'tested_sha=%s\n' "$GITHUB_SHA" >> "$GITHUB_OUTPUT"

@@ -14,9 +14,14 @@ import { TenantOidcAutoRolloutService } from "../src/tenant-oidc/tenant-oidc-aut
 import { ZitadelTenantProjectService } from "../src/tenant-oidc/zitadel-tenant-project.service";
 import { ZitadelOAuthApplicationService } from "../src/oauth-applications/zitadel-oauth-application.service";
 import { runOidcAuthorizationE2E, assertRevokedRefreshCannotAuthorizeTenant } from "./tenant-oidc-browser-e2e";
+import { proveIsolatedTotpMfa } from "./tenant-oidc-totp-e2e";
+import { proveUnapprovedDeviceCodeCannotIssueToken } from "./tenant-oidc-device-unapproved-e2e";
+import { proveDeviceProjectGrantEnforcement } from "./tenant-oidc-device-project-grants-e2e";
 import { startActionProof } from "./tenant-oidc-actions-v2-proof";
+import { McpOAuthDcrService } from "../src/mcp/mcp-oauth-dcr.service";
 import { AppConsumersService } from "../src/app-consumers/app-consumers.service";
 import { AppConsumerActionService } from "../src/app-consumers/app-consumer-action.service";
+import { McpDcrClientVerifierService } from "../src/app-consumers/mcp-dcr-client-verifier.service";
 
 function required(name: string) {
   const value = process.env[name]?.trim();
@@ -34,7 +39,7 @@ if (issuer !== "https://localhost:8443" ||
 }
 const token = required("ZITADEL_MANAGEMENT_TOKEN");
 const orgId = required("ZITADEL_ORGANIZATION_ID");
-const api = async <T>(method: string, route: string, body?: unknown): Promise<T> => {
+const api = async <T>(method: string, route: string, body?: unknown, deadline?: number): Promise<T> => {
   const response = await fetch(issuer + route, {
     method,
     headers: {
@@ -43,7 +48,7 @@ const api = async <T>(method: string, route: string, body?: unknown): Promise<T>
       "x-zitadel-orgid": orgId,
     },
     body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(20000),
+    signal: AbortSignal.timeout(deadline === undefined ? 20000 : Math.max(1, Math.min(20000, Math.ceil(deadline - performance.now())))),
   });
   if (!response.ok) throw new Error("Isolated ZITADEL " + route + " returned HTTP " + response.status);
   return response.json() as Promise<T>;
@@ -65,6 +70,365 @@ async function createZitadelHuman(suffix: string): Promise<string> {
   });
   assert.match(answer.userId ?? "", /^\d+$/, "ZITADEL returned no native user subject");
   return answer.userId!;
+}
+
+/**
+ * Isolated real ZITADEL DCR lost-response proof. The harness deliberately
+ * retains registration-scoped credentials for an exact test-only cleanup;
+ * production orphan recovery without those credentials remains unproven.
+ * NEVER send this experiment to a non-local or production issuer.
+ */
+async function proveDroppedDcrRegistrationResponse() {
+  assert.equal(issuer, "https://localhost:8443");
+  assert.equal(process.env.TENANT_OIDC_E2E_ISOLATED, "true");
+  assert.equal(process.env.GITHUB_ACTIONS, "true");
+  const originalFetch = globalThis.fetch;
+  let accepted: { clientId: string; registrationToken: string } | undefined;
+  const testName = "RP isolated DCR dropped response " + randomUUID();
+  let ownedAppId: string | undefined;
+  let registrationPosts = 0;
+  // Anonymous RFC7591 registrations belong to the instance default org,
+  // not necessarily the separate RP bootstrap organization.
+  const defaultOrg = await api<{ org?: { id?: string } }>("GET", "/admin/v1/orgs/default");
+  const dcrOrgId = defaultOrg.org?.id;
+  assert.ok(dcrOrgId && /^\d+$/.test(dcrOrgId), "Missing default DCR organization ID");
+  console.log("DCR inventory organization matches RP bootstrap: " + (dcrOrgId === orgId));
+  const dcrApi = async <T>(route: string, body: unknown, deadline: number): Promise<T> => {
+    const remaining = Math.ceil(deadline - performance.now());
+    assert.ok(remaining > 0, "DCR inventory deadline exceeded");
+    const response = await originalFetch(issuer + route, {
+      method: "POST", redirect: "error",
+      headers: { authorization: "Bearer " + token, "content-type": "application/json",
+        "x-zitadel-orgid": dcrOrgId },
+      body: JSON.stringify(body), signal: AbortSignal.timeout(remaining),
+    });
+    assert.equal(response.status, 200, "DCR management inventory HTTP failure");
+    return response.json() as Promise<T>;
+  };
+  const readDcrInventory = async (deadline: number) => {
+    const projects = await dcrApi<{ result?: Array<{ id: string; name: string }>; details?: { totalResult?: string } }>(
+      "/management/v1/projects/_search", { query: { limit: 100 },
+        queries: [{ nameQuery: { name: "ZITADEL DCR", method: "TEXT_QUERY_METHOD_EQUALS" } }] }, deadline);
+    const matches = (projects.result ?? []).filter(project => project.name === "ZITADEL DCR");
+    if (matches.length === 0 && Number(projects.details?.totalResult ?? 0) === 0) return null;
+    assert.equal(matches.length, 1, "DCR project missing or ambiguous");
+    assert.equal(Number(projects.details?.totalResult), 1, "DCR project inventory incomplete");
+    type App = { id: string; name?: string; oidcConfig?: { clientId?: string; accessTokenType?: string } };
+    const inventory: App[] = [];
+    for (let page = 0; page < 20; page++) {
+      const response = await dcrApi<{ result?: App[]; details?: { totalResult?: string } }>(
+        "/management/v1/projects/" + encodeURIComponent(matches[0].id) + "/apps/_search",
+        { query: { limit: 100, offset: page * 100 } }, deadline);
+      const rows = response.result ?? [];
+      // Protobuf JSON omits zero-valued scalar fields, including totalResult
+      // on an empty list. Require the ListDetails envelope nevertheless.
+      assert.ok(response.details && Array.isArray(rows), "Missing DCR list details");
+      const total = Number(response.details.totalResult ?? 0);
+      assert.ok(Number.isSafeInteger(total) && total >= 0 && rows.length <= 100,
+        "Invalid DCR application inventory (rows=" + rows.length +
+        ", totalPresent=" + (response.details.totalResult !== undefined) + ")");
+      inventory.push(...rows);
+      if (inventory.length === total) {
+        assert.equal(new Set(inventory.map(app => app.id)).size, inventory.length,
+          "Duplicate application in DCR inventory");
+        return inventory;
+      }
+      assert.ok(rows.length === 100 && inventory.length < total, "Incomplete DCR application inventory");
+    }
+    throw new Error("DCR application inventory exceeds test bound");
+  };
+  let registrationHttpStatus: number | undefined;
+  const registerEndpoint = issuer + "/oauth/v2/register";
+  // DCR is only advertised when the isolated issuer explicitly enables it.
+  // Perform a read-only discovery check; never change issuer settings here.
+  const dcrDiscoveryResponse = await originalFetch(issuer + "/.well-known/openid-configuration", {
+    redirect: "error", signal: AbortSignal.timeout(15000),
+  });
+  assert.equal(dcrDiscoveryResponse.status, 200, "Isolated issuer discovery unavailable");
+  const dcrDiscovery = await dcrDiscoveryResponse.json() as { registration_endpoint?: unknown };
+  if (dcrDiscovery.registration_endpoint !== registerEndpoint) {
+    throw new Error("Isolated ZITADEL DCR endpoint not advertised; no registration POST sent");
+  }
+  const cleanupUrl = (clientId: string) => {
+    assert.match(clientId, /^[a-zA-Z0-9._~-]{1,128}$/);
+    return issuer + "/oauth/v2/register/" + clientId;
+  };
+  globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
+    const requestedUrl = typeof input === "string" ? input
+      : input instanceof URL ? input.href : input.url;
+    if (requestedUrl !== registerEndpoint || init?.method !== "POST") {
+      return originalFetch(input, init);
+    }
+    registrationPosts += 1;
+    // The real HTTPS issuer must COMMIT and return 201 before the harness
+    // simulates a network loss; a fake/stubbed upstream does not count.
+    const response = await originalFetch(input, init);
+    registrationHttpStatus = response.status;
+    assert.equal(response.status, 201, "Isolated HTTPS ZITADEL rejected real DCR registration");
+    const metadata = await response.json() as {
+      client_id?: unknown; registration_access_token?: unknown;
+    };
+    assert.equal(typeof metadata.client_id, "string");
+    assert.equal(typeof metadata.registration_access_token, "string");
+    accepted = {
+      clientId: metadata.client_id as string,
+      registrationToken: metadata.registration_access_token as string,
+    };
+    throw new Error("Synthetic transport failure after actual accepted upstream POST201");
+  };
+  let primaryFailure: unknown;
+  let cleanupFailure: unknown;
+  try {
+    const config = { get: (key: string) => ({
+      ZITADEL_INTERNAL_URL: issuer,
+      OIDC_ISSUER_URL: issuer,
+      ZITADEL_MANAGEMENT_TOKEN: "unused-for-lost-response-proof",
+      ZITADEL_DCR_REQUEST_TIMEOUT_MS: "10000",
+      ZITADEL_DCR_REGISTRATION_TIMEOUT_MS: "30000",
+    })[key as "ZITADEL_INTERNAL_URL" | "OIDC_ISSUER_URL" |
+        "ZITADEL_MANAGEMENT_TOKEN" | "ZITADEL_DCR_REQUEST_TIMEOUT_MS" |
+        "ZITADEL_DCR_REGISTRATION_TIMEOUT_MS"] } as ConfigService;
+    let publicResult: unknown;
+    try {
+      await new McpOAuthDcrService(config).register({
+        client_name: testName,
+        redirect_uris: ["https://chatgpt.com/connector_platform_oauth_redirect"],
+        response_types: ["code"], grant_types: ["authorization_code"],
+        token_endpoint_auth_method: "none",
+      });
+    } catch (failure) {
+      publicResult = failure && typeof failure === "object" && "getResponse" in failure
+        ? (failure as { getResponse: () => unknown }).getResponse() : failure;
+    }
+    assert.equal(registrationPosts, 1,
+      "MCP DCR test never sent exactly one real registration POST");
+    if (registrationHttpStatus !== 201) {
+      throw new Error("Actual isolated ZITADEL DCR POST returned HTTP " +
+        String(registrationHttpStatus ?? "no-response") + "; no accepted client proof");
+    }
+    assert.ok(accepted, "Real HTTP201 did not return valid registration metadata");
+    assert.equal((publicResult as { code?: string } | undefined)?.code,
+      "DCR_REGISTRATION_OUTCOME_UNCERTAIN");
+    assert.ok(!JSON.stringify(publicResult).includes(accepted.registrationToken),
+      "SECURITY: response exposed a registration bearer token");
+    // RFC7592 GET is served from ActiveOIDCClientByID (a read projection),
+    // while the accepted registration committed its write to the eventstore.
+    // Do not assume projection latency is the cause of an initial 404: record
+    // status-only evidence and require actual GET200 within a fixed deadline.
+    // 401/403/5xx are not temporary "not yet visible" observations.
+    const authHeader = { authorization: "Bearer " + accepted.registrationToken };
+    const visibleDeadline = performance.now() + 15000;
+    let beforeStatus = 0;
+    let observationCount = 0;
+    do {
+      const remaining = Math.ceil(visibleDeadline - performance.now());
+      assert.ok(remaining > 0, "Real DCR orphan visibility deadline exceeded");
+      const before = await originalFetch(cleanupUrl(accepted.clientId), {
+        method: "GET", headers: authHeader, redirect: "error",
+        signal: AbortSignal.timeout(remaining),
+      });
+      beforeStatus = before.status;
+      observationCount++;
+      await before.body?.cancel();
+      assert.ok(beforeStatus === 200 || beforeStatus === 404,
+        "Real DCR orphan visibility returned unexpected HTTP " + beforeStatus);
+      if (beforeStatus === 200) break;
+      if (performance.now() >= visibleDeadline) break;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    } while (performance.now() < visibleDeadline);
+    assert.equal(beforeStatus, 200,
+      "Real DCR orphan not independently observable (HTTP " + beforeStatus +
+      ", observations=" + observationCount + ")");
+    console.log("PASS: real HTTPS ZITADEL POST201 then simulated lost response => RP uncertain, one POST, read-only orphan GET200 (#213); observations=" + observationCount);
+  } catch (failure) {
+    primaryFailure = failure;
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (accepted) {
+      try {
+      // Capture the independent management identity before deleting it.
+      // Do not infer ownership from a missing or incomplete inventory.
+      const inventoryDeadline = performance.now() + 15000;
+      let inventory = await readDcrInventory(inventoryDeadline);
+      while ((!inventory || !inventory.some(app => app.oidcConfig?.clientId === accepted!.clientId)) &&
+          performance.now() < inventoryDeadline) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        inventory = await readDcrInventory(inventoryDeadline);
+      }
+      assert.ok(inventory, "Default organization DCR project not visible");
+      const owned = inventory.filter(app => app.oidcConfig?.clientId === accepted!.clientId);
+      assert.equal(owned.length, 1, "Exact DCR app not independently observable before cleanup");
+      assert.ok(owned[0].id && owned[0].name?.startsWith(testName + " ("), "DCR app ownership mismatch");
+      ownedAppId = owned[0].id;
+      // Only this disposable CI-owned client, identified by its exact
+      // returned URI-safe ID, may be deleted using its scoped DCR bearer.
+      const authHeader = { authorization: "Bearer " + accepted.registrationToken };
+      const deleted = await originalFetch(cleanupUrl(accepted.clientId), {
+        method: "DELETE", headers: authHeader, redirect: "error",
+        signal: AbortSignal.timeout(15000),
+      });
+      assert.equal(deleted.status, 204, "Real test DCR client cleanup was not acknowledged");
+      // v4.17.0 RemoveDynamicOIDCClient commits ApplicationRemoved to the
+      // eventstore; RFC7592 GET reads ActiveOIDCClientByID and accepts the
+      // projected token hash without a write-model lookup on a hash match.
+      // A 204 therefore does not establish that the read model has converged.
+      // Require BOTH RFC7592 absence and independent management inventory.
+      const deadline = performance.now() + 15000;
+      let afterStatus = 0;
+      let remainingApps = -1;
+      do {
+        const after = await originalFetch(cleanupUrl(accepted.clientId), {
+          method: "GET", headers: authHeader, redirect: "error",
+          signal: AbortSignal.timeout(Math.max(1, Math.ceil(deadline - performance.now()))),
+        });
+        afterStatus = after.status;
+        await after.body?.cancel();
+        assert.ok([200, 401, 403, 404].includes(afterStatus),
+          "Unexpected RFC7592 cleanup read status: " + afterStatus);
+        const inventory = await readDcrInventory(deadline);
+        assert.ok(inventory, "DCR project disappeared during cleanup verification");
+        remainingApps = inventory.filter(app => app.id === ownedAppId ||
+          app.oidcConfig?.clientId === accepted!.clientId ||
+          app.name?.startsWith(testName + " (")).length;
+        if (afterStatus === 404 && remainingApps === 0) break;
+        if (performance.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
+      } while (performance.now() < deadline);
+      assert.equal(afterStatus, 404, "SECURITY: RFC7592 client not absent after bounded cleanup");
+      assert.equal(remainingApps, 0, "SECURITY: DCR application remains in management inventory");
+      console.log("PASS: exact DCR DELETE204, RFC7592 GET404 and independent management inventory absent (#213)");
+      } catch (failure) {
+        cleanupFailure = failure;
+      }
+    }
+  }
+  // An unsuccessful proof must not be replaced by a secondary cleanup
+  // exception. Conversely, a failed exact-client cleanup must never be
+  // discarded just because an earlier assertion also failed.
+  if (primaryFailure !== undefined && cleanupFailure !== undefined) {
+    throw new AggregateError([primaryFailure, cleanupFailure],
+      "DCR scenario failed and exact-client cleanup could not be verified");
+  }
+  if (cleanupFailure !== undefined) {
+    throw cleanupFailure instanceof Error ? cleanupFailure : new Error("DCR cleanup failed");
+  }
+  if (primaryFailure !== undefined) {
+    throw primaryFailure instanceof Error ? primaryFailure : new Error("DCR scenario failed");
+  }
+
+  // The lost-response proof deliberately never enters RP's compatibility
+  // update. Also test the *real success path*, because anonymous clients are
+  // created in the instance default organization, which can differ from RP's
+  // bootstrap organization. This entire fixture is disposable GitHub CI.
+  const positiveName = "RP isolated DCR JWT compatibility " + randomUUID();
+  const positiveConfig = { get: (key: string) => ({
+    ZITADEL_INTERNAL_URL: issuer,
+    OIDC_ISSUER_URL: issuer,
+    ZITADEL_MANAGEMENT_TOKEN: token,
+    ZITADEL_DCR_REQUEST_TIMEOUT_MS: "10000",
+    ZITADEL_DCR_REGISTRATION_TIMEOUT_MS: "30000",
+  })[key as "ZITADEL_INTERNAL_URL" | "OIDC_ISSUER_URL" |
+      "ZITADEL_MANAGEMENT_TOKEN" | "ZITADEL_DCR_REQUEST_TIMEOUT_MS" |
+      "ZITADEL_DCR_REGISTRATION_TIMEOUT_MS"] } as ConfigService;
+  let positive: { clientId: string; registrationToken: string } | undefined;
+  let compatibilityFailure: unknown;
+  let compatibilityCleanupFailure: unknown;
+  try {
+    const response = await new McpOAuthDcrService(positiveConfig).register({
+      client_name: positiveName,
+      redirect_uris: ["https://chatgpt.com/connector_platform_oauth_redirect"],
+      response_types: ["code"], grant_types: ["authorization_code"],
+      token_endpoint_auth_method: "none",
+    });
+    assert.equal(response.status, 201, "Real ZITADEL DCR compatibility registration failed");
+    const body = JSON.parse(response.body) as {
+      client_id?: string; registration_access_token?: string;
+    };
+    assert.match(body.client_id ?? "", /^[a-zA-Z0-9._~-]{1,128}$/);
+    assert.ok(body.registration_access_token, "Missing scoped DCR registration bearer");
+    positive = { clientId: body.client_id!, registrationToken: body.registration_access_token };
+    const inventoryDeadline = performance.now() + 15000;
+    let app: { id: string; oidcConfig?: { clientId?: string; accessTokenType?: string } } | undefined;
+    do {
+      const inventory = await readDcrInventory(inventoryDeadline);
+      const found = inventory?.filter(item =>
+        item.oidcConfig?.clientId === positive!.clientId &&
+        item.name?.startsWith(positiveName + " (")) ?? [];
+      assert.ok(found.length <= 1, "Ambiguous real DCR compatibility application");
+      app = found[0];
+      if (app?.oidcConfig?.accessTokenType === "OIDC_TOKEN_TYPE_JWT") break;
+      if (performance.now() < inventoryDeadline) await new Promise(resolve => setTimeout(resolve, 100));
+    } while (performance.now() < inventoryDeadline);
+    assert.ok(app, "Real JWT-compatible DCR application missing from management inventory");
+    assert.equal(app.oidcConfig?.accessTokenType, "OIDC_TOKEN_TYPE_JWT",
+      "Real DCR client did not persist the JWT access-token setting");
+    console.log("PASS: real HTTPS ZITADEL DCR success through RP JWT compatibility, independent JWT management readback (#213)");
+    // #442: the actual production Action verifier must recognize this very
+    // DCR client (with the ChatGPT callback) only after a complete,
+    // unambiguous ZITADEL inventory proof. This is the disposable isolated
+    // issuer, not a live ChatGPT user or a production authorization.
+    const verifier = new McpDcrClientVerifierService(positiveConfig);
+    assert.equal(await verifier.isTrustedChatGptClient(positive.clientId), true,
+      "Real ChatGPT DCR client was rejected by the production trust verifier");
+    assert.equal(await verifier.isTrustedChatGptClient("unregistered-" + randomUUID()), false,
+      "Unregistered ChatGPT OAuth client incorrectly trusted by production verifier");
+    console.log("PASS: real HTTPS ZITADEL ChatGPT DCR trust verifier accepts registered exact client and denies unregistered client (#442)");
+  } catch (failure) {
+    compatibilityFailure = failure;
+  } finally {
+    if (positive) {
+      try {
+        const header = { authorization: "Bearer " + positive.registrationToken };
+        const deleted = await originalFetch(cleanupUrl(positive.clientId), {
+          method: "DELETE", headers: header, redirect: "error", signal: AbortSignal.timeout(15000),
+        });
+        assert.equal(deleted.status, 204, "Real DCR compatibility test client cleanup unacknowledged");
+        const deadline = performance.now() + 15000;
+        let status = 0;
+        let remaining = -1;
+        do {
+          const read = await originalFetch(cleanupUrl(positive.clientId), {
+            method: "GET", headers: header, redirect: "error",
+            signal: AbortSignal.timeout(Math.max(1, Math.ceil(deadline - performance.now()))),
+          });
+          status = read.status;
+          void read.body?.cancel().catch(() => undefined);
+          assert.ok([200, 401, 403, 404].includes(status),
+            "Unexpected DCR compatibility cleanup verification status: " + status);
+          const inventory = await readDcrInventory(deadline);
+          assert.ok(inventory, "DCR project disappeared while verifying compatibility cleanup");
+          remaining = inventory.filter(app =>
+            app.oidcConfig?.clientId === positive!.clientId ||
+            app.name?.startsWith(positiveName + " (")).length;
+          if (status === 404 && remaining === 0) break;
+          if (performance.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
+        } while (performance.now() < deadline);
+        assert.equal(status, 404, "Real DCR compatibility client still accessible after deletion");
+        assert.equal(remaining, 0, "Real DCR compatibility application still present after deletion");
+        console.log("PASS: exact successful DCR client removed; GET404 and independent inventory absent (#213)");
+        // #442: a revoked DCR client must lose its authorization eligibility.
+        // Test the same production exact-client verifier, using the isolated
+        // ZITADEL project's completed inventory projection, not mocks.
+        const verifier = new McpDcrClientVerifierService(positiveConfig);
+        assert.equal(await verifier.isTrustedChatGptClient(positive.clientId), false,
+          "Deleted ZITADEL DCR client remained trusted for MCP issuance");
+        console.log("PASS: real HTTPS ZITADEL removed DCR client is no longer eligible for ChatGPT token issuance (#442)");
+      } catch (failure) {
+        compatibilityCleanupFailure = failure;
+      }
+    }
+  }
+  if (compatibilityFailure !== undefined && compatibilityCleanupFailure !== undefined) {
+    throw new AggregateError([compatibilityFailure, compatibilityCleanupFailure],
+      "DCR compatibility failed and test-client cleanup could not be verified");
+  }
+  if (compatibilityCleanupFailure !== undefined) {
+    throw compatibilityCleanupFailure instanceof Error ? compatibilityCleanupFailure :
+      new Error("DCR compatibility cleanup failed");
+  }
+  if (compatibilityFailure !== undefined) {
+    throw compatibilityFailure instanceof Error ? compatibilityFailure :
+      new Error("DCR compatibility registration failed");
+  }
 }
 
 async function main() {
@@ -212,7 +576,20 @@ async function main() {
       issuer, projectId: projectA, foreignProjectId: projectB, clientId: web.clientId,
       clientSecret: web.clientSecret, userId: userAId,
       userName: "oidc-live-" + suffix + "-a", password: "E2e!Test-" + suffix + "-a",
+      assertCodeReplayDenied: true,
     });
+    // #498: prove repeated *fresh* confidential Web authorization requests,
+    // distinct codes/states and separate successful token exchanges. A 200
+    // discovery response or one successful browser redirect is insufficient.
+    for (let replay = 0; replay < 2; replay += 1) {
+      await runOidcAuthorizationE2E({
+        issuer, projectId: projectA, foreignProjectId: projectB,
+        clientId: web.clientId, clientSecret: web.clientSecret,
+        userId: userAId, userName: "oidc-live-" + suffix + "-a",
+        password: "E2e!Test-" + suffix + "-a",
+      });
+    }
+    console.log("PASS: three fresh confidential Web PKCE code exchanges and signed tokens on tenant A (#498)");
     const spa = await clients.provision({
       name: "Isolated SPA " + suffix, type: "SPA",
       redirectUris: ["https://localhost:8443/callback"],
@@ -220,6 +597,68 @@ async function main() {
     }, projectA);
     assert.ok(spa.clientId && !spa.clientSecret, "SPA must not be given confidential credentials");
     ownedApps.push({ id: spa.applicationId, projectId: projectA });
+
+    // #286: previous HTTPS evidence exercised confidential Web PKCE only.
+    // Prove a real public Native/CLI app can complete an interactive code
+    // flow, signed token verification and live refresh with NO client secret.
+    // This is the disposable test issuer, not migration of a user account.
+    const nativeCli = await clients.provision({
+      name: "Isolated Native CLI " + suffix, type: "Native",
+      redirectUris: ["http://127.0.0.1:8765/oidc/callback"],
+      postLogoutRedirectUris: ["https://localhost:8443/logout"],
+    }, projectA);
+    assert.ok(nativeCli.clientId && !nativeCli.clientSecret,
+      "Public Native/CLI OAuth client must not receive a client secret");
+    ownedApps.push({ id: nativeCli.applicationId, projectId: projectA });
+    await runOidcAuthorizationE2E({
+      issuer, projectId: projectA, foreignProjectId: projectB,
+      clientId: nativeCli.clientId, clientSecret: "",
+      userId: userAId, userName: "oidc-live-" + suffix + "-a",
+      password: "E2e!Test-" + suffix + "-a", skipLogout: true,
+      assertCodeReplayDenied: true,
+    });
+    console.log("PASS: isolated Native/CLI public PKCE S256, real browser callback, signed tenant JWT, refresh, code replay denied (no client secret)");
+
+    // RFC 8628 device authorization is distinct from the browser PKCE flow.
+    // Create an actual disposable Device Code client under the tenant A
+    // project, which requires project role checks. Its request MUST remain
+    // pending until a user explicitly consents; unauthenticated reads need
+    // session.read. This does NOT certify signed-in Login V2 consent/grants.
+    const testDevice = await api<{ appId?: string; clientId?: string }>(
+      "POST", "/management/v1/projects/" + encodeURIComponent(projectA) + "/apps/oidc", {
+        name: "Isolated Security Device " + suffix,
+        redirectUris: [],
+        responseTypes: ["OIDC_RESPONSE_TYPE_CODE"],
+        grantTypes: ["OIDC_GRANT_TYPE_DEVICE_CODE"],
+        appType: "OIDC_APP_TYPE_NATIVE",
+        authMethodType: "OIDC_AUTH_METHOD_TYPE_NONE",
+        postLogoutRedirectUris: [],
+        version: "OIDC_VERSION_1_0",
+        devMode: false,
+        accessTokenType: "OIDC_TOKEN_TYPE_JWT",
+        idTokenUserinfoAssertion: true,
+      },
+    );
+    assert.ok(testDevice.appId && testDevice.clientId,
+      "Isolated real Device Authorization client creation failed");
+    ownedApps.push({ id: testDevice.appId, projectId: projectA });
+    await proveUnapprovedDeviceCodeCannotIssueToken({ clientId: testDevice.clientId });
+    // Direct Device Authorization API P1 check (not a Login V2 UI check):
+    // privileged synthetic Login Client requests must reject user B's absent
+    // tenant A project grant, but accept user A's *actual* tenant A grant with
+    // the same client/session.link and signed JWT positive control.
+    await proveDeviceProjectGrantEnforcement({
+      api, clientId: testDevice.clientId,
+      allowed: {
+        userId: userAId, loginName: "oidc-live-" + suffix + "-a",
+        password: "E2e!Test-" + suffix + "-a",
+      },
+      denied: {
+        userId: userBId, loginName: "oidc-live-" + suffix + "-b",
+        password: "E2e!Test-" + suffix + "-b",
+      },
+    });
+
 
     // SECURITY PROOF (#398): same ZITADEL project, two distinct OAuth client
     // IDs, and a separate project/user. No real RP App User grant is created.
@@ -683,6 +1122,16 @@ async function main() {
       "GET", "/management/v1/users/" + userBId + "/grants/" + rowB.zitadelGrantId,
     );
     assert.equal(stillB.userGrant.projectId, projectB, "Tenant A revocation harmed Tenant B");
+    // New evidence on the synthetic isolated ZITADEL user: verify that a
+    // password-checked session cannot claim MFA until real TOTP validation.
+    // Run AFTER browser/OIDC token paths so enrollment does not change those
+    // flows or silently alter other identity-provider policy.
+    await proveIsolatedTotpMfa({
+      api, userId: userAId,
+      loginName: "oidc-live-" + suffix + "-a",
+      password: "E2e!Test-" + suffix + "-a",
+    });
+    await proveDroppedDcrRegistrationResponse();
     console.log("PASS: real HTTPS issuer/discovery/JWKS, two independent projects and client types,");
     console.log("  membership-backed grants, cross-tenant denial and live grant revocation.");
     console.log("PENDING: production migration certification, RP Web/CLI live refresh and MFA/recovery,");

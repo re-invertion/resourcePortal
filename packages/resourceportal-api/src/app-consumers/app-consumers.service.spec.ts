@@ -268,6 +268,43 @@ describe("#430 unified membership / exact OAuth client authorization", () => {
     )).resolves.toBe(false);
   });
 
+  it("re-evaluates the exact MCP upstream client's tenant allowlist on each token or refresh decision", async () => {
+    const f = fixture();
+    const clientId = "340396026519785524";
+    const tenantB = "66666666-6666-4666-8666-666666666666";
+    f.prisma.mcpOAuthUpstreamClient.findUnique.mockResolvedValue({ tenantId, clientId });
+    const allowed = { id: membershipId, tenant: {
+      mcpSettings: { enabled: true, accessMode: "SelectedMembers", allowedMembers: [{ membershipId }] },
+    } };
+    f.prisma.tenantMembership.findMany
+      .mockResolvedValueOnce([allowed]) // initial token
+      .mockResolvedValueOnce([{ ...allowed, tenant: {
+        mcpSettings: { ...allowed.tenant.mcpSettings, allowedMembers: [] },
+      } }]) // current membership removed from allowlist before refresh
+      .mockResolvedValueOnce([{ ...allowed, tenant: {
+        mcpSettings: { enabled: false, accessMode: "AllMembers", allowedMembers: [] },
+      } }]) // tenant disabled before another refresh
+      .mockResolvedValueOnce([allowed]); // restored for final check
+    await expect(f.svc.mayIssueMcpUpstreamToken(issuer, "123456", clientId)).resolves.toBe(true);
+    await expect(f.svc.mayIssueMcpUpstreamToken(issuer, "123456", clientId)).resolves.toBe(false);
+    await expect(f.svc.mayIssueMcpUpstreamToken(issuer, "123456", clientId)).resolves.toBe(false);
+    await expect(f.svc.mayIssueMcpUpstreamToken(issuer, "123456", clientId)).resolves.toBe(true);
+    const calls = f.prisma.tenantMembership.findMany.mock.calls;
+    expect(calls).toHaveLength(4);
+    for (const call of calls) {
+      const query = call[0] as unknown as { where: {
+        userId: string; tenantId: string; status: string;
+        tenant: { status: string }; OR: unknown[];
+      } };
+      expect(query).toMatchObject({ where: {
+        userId, tenantId, status: "Active", tenant: { status: "Active" },
+      } });
+      expect(query.where.OR).toContainEqual({ roles: { some: { roleId: "sso-login" } } });
+      expect(query.where.tenantId).not.toBe(tenantB);
+    }
+    expect(f.prisma.mcpOAuthUpstreamClient.findUnique).toHaveBeenCalledTimes(4);
+  });
+
   it("does not fall back to ZITADEL project roles for unknown, global or DCR clients", async () => {
     const f = fixture();
     f.prisma.oAuthApplication.findUnique.mockResolvedValueOnce(null);

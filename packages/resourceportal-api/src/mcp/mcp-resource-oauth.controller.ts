@@ -127,7 +127,7 @@ export class McpResourceOAuthController {
       const callbackOrigin = new URL(options.redirectUri).origin;
       reply.header(
         "content-security-policy",
-        `default-src 'none'; style-src 'nonce-${styleNonce}'; form-action 'self' ${callbackOrigin}; base-uri 'none'; frame-ancestors 'none'; object-src 'none'`,
+        `default-src 'none'; img-src 'self'; style-src 'nonce-${styleNonce}'; form-action 'self' ${callbackOrigin}; base-uri 'none'; frame-ancestors 'none'; object-src 'none'`,
       );
       return reply.status(200).type("text/html; charset=utf-8").send(
         renderMcpConsentPage(tenant.displayName, options.scope, csrf, nonce, styleNonce),
@@ -390,46 +390,115 @@ function renderMcpConsentPage(
         : item;
     return `<li><span class="scope-icon" aria-hidden="true">✓</span><div><strong>${escapeHtml(item)}</strong><span>${escapeHtml(label)}</span></div></li>`;
   }).join("");
-  return `<!doctype html><html lang="pl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Połącz ChatGPT — ResourcePortal</title><style nonce="${styleNonce}">
-    :root{color-scheme:light;font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#0f172a;background:#f8fafc}
-    *{box-sizing:border-box}body{margin:0;min-height:100vh}
-    .topbar{background:#fff;border-bottom:1px solid #e2e8f0;padding:17px clamp(20px,5vw,56px);box-shadow:0 1px 2px #0f172a08}
-    .brand{font-weight:750;font-size:18px;letter-spacing:-.025em}.brand-mark{display:inline-block;width:10px;height:10px;background:#2563eb;border-radius:3px;margin-right:11px}
-    main{width:min(100% - 36px,620px);margin:clamp(34px,8vh,78px) auto 40px}
-    .eyebrow{font-size:12px;letter-spacing:.08em;text-transform:uppercase;font-weight:750;color:#2563eb;margin:0 0 13px}
-    .panel{border:1px solid #e2e8f0;border-radius:14px;box-shadow:0 12px 32px #0f172a0c;background:#fff;padding:clamp(22px,5vw,40px)}
-    h1{font-size:clamp(24px,4.8vw,31px);letter-spacing:-.04em;line-height:1.2;margin:0 0 12px}
-    .intro,.notice{color:#475569;font-size:14px;line-height:1.7;margin:0 0 25px}
-    .meta-label{display:block;font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px}
-    .tenant{border:1px solid #bfdbfe;background:#eff6ff;border-radius:10px;padding:16px 18px;margin-bottom:24px;overflow-wrap:anywhere}
-    .tenant strong{display:block;font-size:17px;color:#1e3a8a}
-    h2{font-size:15px;margin:0 0 13px}
-    .scopes{list-style:none;padding:0;margin:0 0 25px}
-    .scopes li{display:flex;gap:12px;align-items:flex-start;padding:12px 0;border-bottom:1px solid #f1f5f9}
-    .scopes li:first-child{border-top:1px solid #f1f5f9}
-    .scopes strong,.scopes span{display:block;font-size:13px;line-height:1.5}
-    .scopes span{color:#64748b}.scope-icon{width:24px;min-width:24px;height:24px;display:grid!important;place-items:center;color:#1d4ed8!important;background:#dbeafe;border-radius:7px;font-weight:800}
-    .notice{padding:13px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:9px;margin-bottom:24px}
-    .actions{display:flex;gap:12px;flex-wrap:wrap}
-    button{border-radius:8px;padding:12px 22px;font-size:14px;font-weight:700;min-height:44px;cursor:pointer}
-    button:focus-visible{outline:3px solid #93c5fd;outline-offset:2px}
-    .allow{background:#2563eb;color:#fff;border:1px solid #2563eb}
-    .allow:hover{background:#1d4ed8}.deny{background:#fff;border:1px solid #cbd5e1;color:#334155}
-    .deny:hover{background:#f1f5f9}
-    .footnote{font-size:12px;color:#64748b;line-height:1.5;margin:18px 0 0}
-    @media(max-width:450px){.actions{flex-direction:column}.actions button{width:100%}}
-  </style></head><body><header class="topbar"><span class="brand-mark" aria-hidden="true"></span><span class="brand">ResourcePortal</span></header>
-  <main><div class="panel"><p class="eyebrow">Autoryzacja połączenia</p><h1>Połącz ChatGPT z ResourcePortal</h1>
-  <p class="intro">Zatwierdzasz dostęp aplikacji ChatGPT do ResourcePortal na swoim koncie. Połączenie nie przyznaje nowych ról.</p>
-  <section class="tenant" aria-label="Wybrany tenant"><span class="meta-label">Tenant</span><strong>${escapeHtml(tenant)}</strong></section>
-  <h2>Żądany zakres dostępu</h2><ul class="scopes">${renderedScopes}</ul>
-  <p class="notice">Narzędzia mogą odczytywać lub zmieniać dane, ale każde wywołanie podlega uprawnieniom użytkownika, polityce tenanta i katalogowi MCP. Dostęp można cofnąć.</p>
-  <form action="/api/mcp/oauth/approve" method="post">
-    <input type="hidden" name="csrf_token" value="${escapeHtml(csrf)}">
-    <input type="hidden" name="consent_nonce" value="${escapeHtml(nonce)}">
-    <div class="actions"><button class="allow" type="submit" name="decision" value="approve">Zezwól na połączenie</button>
-    <button class="deny" type="submit" name="decision" value="deny">Odmów</button></div>
-  </form>
-  <p class="footnote">Zezwolenie dotyczy wyłącznie wybranego tenanta i aktualnie przypisanych uprawnień.</p>
-  </div></main></body></html>`;
+  return `<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Połącz ChatGPT — ResourcePortal</title>
+  <style nonce="${styleNonce}">
+    :root{color-scheme:light;font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#172033;background:#F7F9FC}
+    *{box-sizing:border-box}
+    body{margin:0;min-height:100vh}
+    .workspace{display:grid;grid-template-columns:minmax(430px,42vw) minmax(0,1fr);min-height:100vh;min-height:100dvh}
+    .aside{position:relative;isolation:isolate;display:flex;flex-direction:column;overflow:hidden;min-width:0;padding:48px;background:#122033;color:#fff}
+    .aside::before,.aside::after{content:"";position:absolute;z-index:-1;border-radius:50%;pointer-events:none}
+    .aside::before{width:360px;height:360px;top:64px;left:40px;background:#17365E;opacity:.75}
+    .aside::after{width:310px;height:310px;right:-64px;bottom:-56px;background:#18375F;opacity:.65}
+    .brand-inverse{display:block;width:250px;max-width:100%;height:auto}
+    .aside-content{display:flex;flex:1;flex-direction:column;justify-content:center;padding:48px 0;max-width:390px}
+    .aside h2{font-size:clamp(28px,2.8vw,34px);font-weight:650;line-height:1.25;letter-spacing:-.025em;margin:0 0 24px;color:#fff}
+    .aside-intro{color:#D9E8FF;font-size:14px;line-height:1.65;margin:0}
+    .assurances{display:grid;gap:22px;margin-top:44px}
+    .assurance{display:flex;align-items:flex-start;gap:14px}
+    .assurance-icon{display:grid;place-items:center;flex:0 0 32px;width:32px;height:32px;border:1px solid #ffffff25;border-radius:50%;background:#ffffff18;color:#fff;font-size:14px;font-weight:700}
+    .assurance strong{display:block;color:#fff;font-size:14px;line-height:1.4}
+    .assurance span:last-child{display:block;margin-top:4px;color:#C6D5EA;font-size:13px;line-height:1.5}
+    .content{display:flex;flex-direction:column;min-width:0;min-height:100vh;min-height:100dvh;padding:32px clamp(16px,4vw,56px)}
+    .content-header{display:flex;min-height:44px;align-items:center;justify-content:space-between;gap:18px}
+    .brand-mobile{display:none;width:140px;max-width:45vw;height:auto}
+    .header-label{margin-left:auto;font-size:13px;font-weight:600;color:#526070}
+    main{display:flex;flex:1;align-items:center;width:100%;max-width:520px;margin:0 auto;padding:36px 0 48px}
+    .main-inner{width:100%;min-width:0}
+    .intro-heading{margin:0 0 12px}
+    .intro-heading strong{display:block;font-size:18px;font-weight:650;line-height:1.55;color:#172033}
+    .intro-heading span{display:block;margin-top:3px;font-size:13px;line-height:1.6;color:#5B6678}
+    .panel{padding:clamp(24px,4vw,40px);background:#fff;border:1px solid #D7E0EC;border-radius:10px;box-shadow:0 18px 48px #17203324}
+    .eyebrow{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#1769E0;margin:0 0 12px}
+    h1{font-size:clamp(25px,3vw,28px);font-weight:650;line-height:1.22;letter-spacing:-.025em;color:#172033;margin:0 0 16px}
+    .intro{font-size:14px;line-height:1.65;color:#5B6678;margin:0 0 24px}
+    .tenant{padding:16px 18px;background:#F4F7FB;border:1px solid #D7E0EC;border-radius:8px;margin-bottom:26px;overflow-wrap:anywhere}
+    .meta-label{display:block;margin-bottom:6px;color:#526070;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+    .tenant strong{display:block;font-size:16px;font-weight:650;color:#172033}
+    h2{font-size:15px;font-weight:650;color:#172033;margin:0 0 8px}
+    .scopes{list-style:none;padding:0;margin:0 0 22px}
+    .scopes li{display:flex;align-items:flex-start;gap:12px;padding:13px 0;border-bottom:1px solid #E8EDF3}
+    .scopes li:first-child{border-top:1px solid #E8EDF3}
+    .scope-icon{display:grid;place-items:center;flex:0 0 28px;width:28px;height:28px;background:#EAF3FF;border-radius:8px;color:#1769E0;font-size:14px;font-weight:700}
+    .scopes li strong{display:block;color:#172033;font-size:13px;line-height:1.5}
+    .scopes li div span{display:block;color:#5B6678;font-size:13px;line-height:1.5}
+    .notice{margin:0 0 24px;padding:14px 16px;background:#F4F7FB;border:1px solid #D7E0EC;border-radius:8px;color:#526070;font-size:13px;line-height:1.65}
+    form{margin:0}
+    .actions{display:flex;flex-wrap:wrap;gap:12px}
+    button{display:inline-flex;justify-content:center;align-items:center;min-height:44px;border-radius:6px;padding:10px 20px;font-family:inherit;font-size:14px;font-weight:600;line-height:1.4;cursor:pointer;transition:background-color .15s,border-color .15s}
+    button:focus-visible{outline:2px solid #1769E0;outline-offset:3px}
+    .allow{background:#1769E0;border:1px solid #1769E0;color:#fff}
+    .allow:hover{background:#0f5fcf;border-color:#0f5fcf}
+    .deny{background:#fff;border:1px solid #B9C5D6;color:#172033}
+    .deny:hover{background:#F4F7FB}
+    .footnote{color:#5B6678;font-size:12px;line-height:1.6;margin:18px 0 0}
+    @media(max-width:979px){.workspace{grid-template-columns:minmax(0,1fr)}.aside{display:none}.brand-mobile{display:block}.content{padding:20px 24px}.content-header{min-height:40px}}
+    @media(max-width:520px){.content{padding:20px 16px}.header-label{font-size:11px}.panel{padding:24px}.actions{flex-direction:column}.actions button{width:100%}main{padding:28px 0 36px}}
+    @media(prefers-reduced-motion:reduce){button{transition:none}}
+  </style>
+</head>
+<body>
+<div class="workspace">
+  <aside class="aside" aria-label="O ResourcePortal">
+    <img class="brand-inverse" src="/brand/resourceportal-wordmark-white-hq.png" alt="ResourcePortal">
+    <div class="aside-content">
+      <h2>Bezpieczny dostęp do Twojej infrastruktury.</h2>
+      <p class="aside-intro">Połącz narzędzia ChatGPT z ResourcePortal, zachowując kontrolę nad dostępem i uprawnieniami.</p>
+      <div class="assurances">
+        <div class="assurance"><span class="assurance-icon" aria-hidden="true">✓</span><div><strong>Twoje uprawnienia</strong><span>Połączenie nie dodaje nowych ról ani dostępu do innych tenantów.</span></div></div>
+        <div class="assurance"><span class="assurance-icon" aria-hidden="true">✓</span><div><strong>Kontrola nad połączeniem</strong><span>Możesz cofnąć autoryzację i zakończyć dostęp w dowolnym momencie.</span></div></div>
+      </div>
+    </div>
+  </aside>
+  <div class="content">
+    <header class="content-header">
+      <img class="brand-mobile" src="/brand/resourceportal-wordmark-hq.png" alt="ResourcePortal">
+      <span class="header-label">Bezpieczna autoryzacja OAuth</span>
+    </header>
+    <main>
+      <div class="main-inner">
+        <p class="intro-heading"><strong>Autoryzacja aplikacji</strong><span>Potwierdź dostęp do wybranego tenanta.</span></p>
+        <div class="panel">
+          <p class="eyebrow">Zgoda na połączenie</p>
+          <h1>Połącz ChatGPT z ResourcePortal</h1>
+          <p class="intro">ChatGPT prosi o dostęp do narzędzi ResourcePortal. Połączenie nie przyznaje nowych ról.</p>
+          <section class="tenant" aria-label="Wybrany tenant">
+            <span class="meta-label">Wybrany tenant</span>
+            <strong>${escapeHtml(tenant)}</strong>
+          </section>
+          <h2>Żądany zakres dostępu</h2>
+          <ul class="scopes">${renderedScopes}</ul>
+          <p class="notice">Narzędzia mogą odczytywać lub zmieniać dane, ale każde wywołanie nadal podlega Twoim uprawnieniom, polityce tenanta i katalogowi MCP. Dostęp możesz cofnąć.</p>
+          <form action="/api/mcp/oauth/approve" method="post">
+            <input type="hidden" name="csrf_token" value="${escapeHtml(csrf)}">
+            <input type="hidden" name="consent_nonce" value="${escapeHtml(nonce)}">
+            <div class="actions">
+              <button class="allow" type="submit" name="decision" value="approve">Zezwól na połączenie</button>
+              <button class="deny" type="submit" name="decision" value="deny">Odmów</button>
+            </div>
+          </form>
+          <p class="footnote">Zezwolenie dotyczy tylko wybranego tenanta i aktualnie przypisanych uprawnień.</p>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+</body>
+</html>`;
 }

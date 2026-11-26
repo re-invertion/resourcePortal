@@ -13,6 +13,9 @@ cleanup() {
     "${compose[@]}" logs --no-color --tail 25 zitadel >&2 || true
   fi
   "${compose[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
+  # The special IAM_LOGIN_CLIENT PAT exists only in this disposable
+  # GitHub runner; never leave it in a CI workspace after teardown.
+  rm -f var/federation/zitadel/login-client.pat
   rm -f .env
   exit "$exit_code"
 }
@@ -38,7 +41,7 @@ chmod 644 var/federation/zitadel/tls/issuer.crt
 chmod 600 var/federation/zitadel/tls/issuer.key
 
 export NODE_EXTRA_CA_CERTS="$root/var/federation/zitadel/tls/issuer.crt"
-export ZITADEL_VERSION=v4.17.0
+export ZITADEL_VERSION=v4.19.5
 "${compose[@]}" up -d rp-postgres zitadel-postgres zitadel
 ok=false
 for ((attempt=0; attempt<120; attempt++)); do
@@ -85,6 +88,63 @@ source "$root/.env"
 set +a
 export TENANT_OIDC_E2E_ISOLATED=true
 export ZITADEL_MANAGEMENT_TOKEN="$(tr -d '\r\n' <"$root/var/federation/zitadel/admin.pat")"
+export ZITADEL_LOGIN_CLIENT_PAT_FILE="$root/var/federation/zitadel/login-client.pat"
+test -s "$ZITADEL_LOGIN_CLIENT_PAT_FILE" || {
+  echo "Isolated ZITADEL setup did not produce the IAM_LOGIN_CLIENT test PAT" >&2
+  exit 1
+}
+
+# Provision DCR only on the disposable GitHub-hosted test issuer. The real
+# MCP registration proof sends an anonymous RFC 7591 request, so this
+# fixture needs open registration. Never apply this policy to a shared issuer.
+node <<'NODE'
+const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const { setTimeout: delay } = require('node:timers/promises');
+(async () => {
+  const issuer = 'https://localhost:8443';
+  assert.equal(process.env.TENANT_OIDC_E2E_ISOLATED, 'true');
+  assert.equal(process.env.GITHUB_ACTIONS, 'true');
+  assert.equal(process.env.RUNNER_ENVIRONMENT, 'github-hosted');
+  const discoveryUrl = issuer + '/.well-known/openid-configuration';
+  const getDiscovery = async () => {
+    const response = await fetch(discoveryUrl, {
+      method: 'GET', redirect: 'error', signal: AbortSignal.timeout(15000),
+      headers: { accept: 'application/json' },
+    });
+    assert.equal(response.status, 200, 'Isolated ZITADEL discovery must return HTTP 200');
+    const discovery = await response.json();
+    assert.equal(discovery.issuer, issuer, 'Isolated ZITADEL issuer mismatch');
+    return discovery;
+  };
+  await getDiscovery();
+  const pat = (await fs.readFile('var/federation/zitadel/admin.pat', 'utf8')).trim();
+  assert.ok(pat.length > 0 && !/\s/.test(pat), 'Missing or invalid isolated bootstrap PAT');
+  const settings = await fetch(issuer + '/v2/settings/security', {
+    method: 'PUT', redirect: 'error', signal: AbortSignal.timeout(15000),
+    headers: { authorization: 'Bearer ' + pat, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      dynamicClientRegistration: { enabled: true, allowUnauthenticated: true },
+    }),
+  });
+  assert.equal(settings.status, 200, 'Isolated ZITADEL DCR bootstrap failed');
+  // The policy event is projected asynchronously. Keep the real discovery
+  // prerequisite fail-closed, with bounded polling rather than a fixed sleep.
+  for (let attempt = 0; attempt < 30; attempt++) {
+    const discovery = await getDiscovery();
+    if (discovery.registration_endpoint === issuer + '/oauth/v2/register') {
+      console.log('PASS: isolated HTTPS issuer advertises its exact OAuth DCR endpoint.');
+      return;
+    }
+    await delay(1000);
+  }
+  throw new Error('Isolated ZITADEL DCR endpoint not advertised after bootstrap');
+})().catch(error => {
+  // Do not expose administrative bearer or provider response bodies.
+  console.error('BLOCKED: isolated HTTPS DCR bootstrap failed:', error.message);
+  process.exitCode = 1;
+});
+NODE
 
 (
   cd packages/resourceportal-api

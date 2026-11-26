@@ -33,6 +33,7 @@ jobs:
       swarm_smoke: ${{ steps.test-plan.outputs.swarm_smoke }}
       capacity_smoke: ${{ steps.test-plan.outputs.capacity_smoke }}
       federation_required: ${{ steps.test-plan.outputs.federation_required }}
+      login_v2_required: ${{ steps.test-plan.outputs.login_v2_required }}
       installer_required: ${{ steps.test-plan.outputs.installer_required }}
     steps:
       - uses: actions/checkout@v4
@@ -235,7 +236,7 @@ jobs:
           RP_ROLLBACK_EVIDENCE_OUTPUT: ${{ runner.temp }}/rp-rollback-evidence.json
           RP_ROLLBACK_E2E_ISOLATED: 'true'
           # Must match immutable version resolved by the release workflow.
-          RP_ROLLBACK_CANDIDATE_ZITADEL_IMAGE: ghcr.io/zitadel/zitadel:v4.17.0
+          RP_ROLLBACK_CANDIDATE_ZITADEL_IMAGE: ghcr.io/zitadel/zitadel:v4.19.5
         shell: bash
         run: |
           set -euo pipefail
@@ -245,7 +246,7 @@ jobs:
         env:
           RP_ROLLBACK_EVIDENCE_OUTPUT: ${{ runner.temp }}/rp-rollback-evidence-146.json
           RP_ROLLBACK_E2E_ISOLATED: 'true'
-          RP_ROLLBACK_CANDIDATE_ZITADEL_IMAGE: ghcr.io/zitadel/zitadel:v4.17.0
+          RP_ROLLBACK_CANDIDATE_ZITADEL_IMAGE: ghcr.io/zitadel/zitadel:v4.19.5
           VALIDATION_MODE: ${{ steps.release-mode.outputs.mode }}
         shell: bash
         run: |
@@ -281,7 +282,7 @@ jobs:
         env:
           RP_ROLLBACK_EVIDENCE_OUTPUT: ${{ runner.temp }}/rp-rollback-evidence-152.json
           RP_ROLLBACK_E2E_ISOLATED: 'true'
-          RP_ROLLBACK_CANDIDATE_ZITADEL_IMAGE: ghcr.io/zitadel/zitadel:v4.17.0
+          RP_ROLLBACK_CANDIDATE_ZITADEL_IMAGE: ghcr.io/zitadel/zitadel:v4.19.5
           VALIDATION_MODE: ${{ steps.release-mode.outputs.mode }}
         shell: bash
         run: |
@@ -317,7 +318,7 @@ jobs:
         env:
           RP_ROLLBACK_EVIDENCE_OUTPUT: ${{ runner.temp }}/rp-rollback-evidence-197.json
           RP_ROLLBACK_E2E_ISOLATED: 'true'
-          RP_ROLLBACK_CANDIDATE_ZITADEL_IMAGE: ghcr.io/zitadel/zitadel:v4.17.0
+          RP_ROLLBACK_CANDIDATE_ZITADEL_IMAGE: ghcr.io/zitadel/zitadel:v4.19.5
           VALIDATION_MODE: ${{ steps.release-mode.outputs.mode }}
         shell: bash
         run: |
@@ -422,6 +423,15 @@ jobs:
     if: needs.candidate.outputs.mode == 'milestone' || needs.candidate.outputs.federation_required == 'true'
     uses: ./.github/workflows/tenant-oidc-live.yml
 
+  # Never use a path filter or a prior PR run as proof for the queue SHA.
+  # Run in parallel with candidate validation on every non-draft candidate.
+  login-v2:
+    name: Real isolated ZITADEL Login V2 gate
+    if: github.event_name == 'merge_group' || github.event.pull_request.draft == false
+    permissions:
+      contents: read
+    uses: ./.github/workflows/tenant-oidc-login-v2.yml
+
   installer:
     name: Production installer gate
     needs: candidate
@@ -434,7 +444,7 @@ jobs:
     name: Required release readiness
     runs-on: ubuntu-latest
     if: always()
-    needs: [candidate, swarm, capacity-docker29, federation, installer, tenant-oidc]
+    needs: [candidate, swarm, capacity-docker29, federation, installer, tenant-oidc, login-v2]
     steps:
       - name: Fail closed unless all applicable pre-merge checks succeeded
         env:
@@ -450,6 +460,9 @@ jobs:
           FEDERATION: ${{ needs.federation.result }}
           INSTALLER: ${{ needs.installer.result }}
           TENANT_OIDC: ${{ needs.tenant-oidc.result }}
+          LOGIN_V2_REQUIRED: ${{ needs.candidate.outputs.login_v2_required }}
+          LOGIN_V2: ${{ needs.login-v2.result }}
+          LOGIN_V2_TESTED_SHA: ${{ needs.login-v2.outputs.tested_sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -466,6 +479,11 @@ jobs:
               exit 1
             fi
           }
+          # Unconditional security boundary: even a skipped nested reusable job
+          # reporting success cannot pass without its post-E2E SHA receipt.
+          [[ "$LOGIN_V2_REQUIRED" == true ]] || { echo "Missing mandatory Login V2 test plan" >&2; exit 1; }
+          verify_gate login-v2 "$LOGIN_V2" true
+          [[ -n "$GITHUB_SHA" && "$LOGIN_V2_TESTED_SHA" == "$GITHUB_SHA" ]] || { echo "Missing or mismatched Login V2 candidate evidence" >&2; exit 1; }
           if [[ "$MODE" == milestone || "$SWARM_SMOKE" == true ]]; then
             verify_gate swarm "$SWARM" true
           else

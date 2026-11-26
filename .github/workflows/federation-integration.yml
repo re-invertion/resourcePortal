@@ -16,10 +16,13 @@ permissions:
 jobs:
   federation-e2e:
     if: inputs.force_gate == true || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    # Playwright 1.63 dependency package names are not available on Ubuntu 26.04;
+    # pin the browser integration runner to a supported distro instead of
+    # bypassing browser dependency installation or skipping the live gate.
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
     env:
-      ZITADEL_VERSION: v4.17.0
+      ZITADEL_VERSION: v4.19.5
     steps:
       - name: Checkout
         uses: actions/checkout@v4

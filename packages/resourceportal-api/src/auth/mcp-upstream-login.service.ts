@@ -1,6 +1,5 @@
 import { Injectable, ServiceUnavailableException, UnauthorizedException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { Prisma } from "@prisma/client";
 import { createHash, randomBytes } from "node:crypto";
 import { OidcAuthService } from "./oidc-auth.service";
 import { OidcIssuerTransport } from "./oidc-issuer-transport";
@@ -48,6 +47,22 @@ export class McpUpstreamLoginService {
     return `${origin}/api/mcp/oauth/upstream/callback`;
   }
 
+  private assertTrustedTokenEndpoint(value: string): void {
+    try {
+      const tokenEndpoint = new URL(value);
+      const issuer = new URL(this.config.get<string>("OIDC_ISSUER_URL") ?? "");
+      if (tokenEndpoint.protocol !== "https:" ||
+          tokenEndpoint.origin !== issuer.origin ||
+          tokenEndpoint.pathname !== "/oauth/v2/token" ||
+          tokenEndpoint.search || tokenEndpoint.hash ||
+          tokenEndpoint.username || tokenEndpoint.password) {
+        throw new Error("Untrusted OIDC token metadata");
+      }
+    } catch {
+      throw new ServiceUnavailableException("Untrusted ZITADEL token endpoint");
+    }
+  }
+
   private async upstreamClient(tenantId: string, origin: string) {
     const existing = await this.prisma.mcpOAuthUpstreamClient.findUnique({
       where: { tenantId },
@@ -58,46 +73,146 @@ export class McpUpstreamLoginService {
     if (!discovery.registrationEndpoint) {
       throw new ServiceUnavailableException("ZITADEL DCR registration is not available");
     }
-    const response = await this.transport().fetch(discovery.registrationEndpoint, "registration", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        client_name: `ResourcePortal MCP identity ${tenantId}`,
-        redirect_uris: [this.callback(origin)],
-        application_type: "web",
-        response_types: ["code"],
-        grant_types: ["authorization_code"],
-        token_endpoint_auth_method: "none",
-      }),
-      signal: AbortSignal.timeout(10_000),
+    // Discovery may be corrupted or attacker-influenced. Reject unexpected
+    // DCR endpoints BEFORE a non-idempotent upstream registration POST;
+    // a deterministic local metadata error must not be reported as a
+    // possibly accepted client. In particular, origin equality alone is
+    // insufficient: require the one RFC7591 ZITADEL registration path.
+    try {
+      const registrationUrl = new URL(discovery.registrationEndpoint);
+      const configuredIssuer = new URL(this.config.get<string>("OIDC_ISSUER_URL") ?? "");
+      if (registrationUrl.protocol !== "https:" ||
+          registrationUrl.origin !== configuredIssuer.origin ||
+          registrationUrl.pathname !== "/oauth/v2/register" ||
+          registrationUrl.search || registrationUrl.hash ||
+          registrationUrl.username || registrationUrl.password) {
+        throw new Error("Untrusted DCR metadata");
+      }
+    } catch {
+      throw new ServiceUnavailableException("Untrusted ZITADEL DCR registration endpoint");
+    }
+    // Canonical RP origin validation happens before attempting the POST;
+    // local configuration failures are not uncertain upstream mutations.
+    const callbackUri = this.callback(origin);
+    // Construct and validate the transport before the durable reservation.
+    // A deterministic local TLS/issuer configuration error cannot have sent a POST.
+    const transport = this.transport();
+    // Persist a unique, non-expiring reservation BEFORE the external side
+    // effect. PostgreSQL commits this statement before the network call, so
+    // replicas, process restarts and ambiguous provider responses cannot
+    // dispatch another first-registration for this tenant. Never put a
+    // placeholder in McpOAuthUpstreamClient (the issuer's trusted allowlist).
+    const claimed = await this.prisma.mcpOAuthUpstreamRegistration.createMany({
+      data: { tenantId, status: "Pending" }, skipDuplicates: true,
     });
+    if (claimed.count !== 1) {
+      // A completed binding is authoritative; a pending/uncertain reservation
+      // is never treated as proof and is not reset by a timer or request.
+      const bound = await this.prisma.mcpOAuthUpstreamClient.findUnique({ where: { tenantId } });
+      if (bound) return bound.clientId;
+      throw new ServiceUnavailableException({
+        code: "MCP_IDENTITY_DCR_RECONCILIATION_REQUIRED",
+        message: "An identity registration is pending or uncertain; reconcile the exact upstream client before retrying",
+      });
+    }
+    // A caller may have committed the binding after our initial read (e.g.
+    // during a rolling upgrade). Do not register another client in that case.
+    const bound = await this.prisma.mcpOAuthUpstreamClient.findUnique({ where: { tenantId } });
+    if (bound) return bound.clientId;
+    let response: Response;
+    try {
+      response = await transport.fetch(discovery.registrationEndpoint, "registration", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          client_name: `ResourcePortal MCP identity ${tenantId}`,
+          redirect_uris: [callbackUri],
+          application_type: "web",
+          response_types: ["code"],
+          grant_types: ["authorization_code"],
+          token_endpoint_auth_method: "none",
+        }),
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch {
+      // The upstream may have persisted a DCR client before its response
+      // failed. The committed reservation survives even if updating its
+      // diagnostic status fails. Never retry a non-idempotent POST.
+      await this.markRegistrationUncertain(tenantId);
+      throw new ServiceUnavailableException({
+        code: "MCP_IDENTITY_DCR_REGISTRATION_OUTCOME_UNCERTAIN",
+        message: "ZITADEL MCP identity registration may have been accepted; reconcile upstream clients before retrying",
+      });
+    }
     if (response.status !== 201) {
-      throw new ServiceUnavailableException("ZITADEL denied MCP identity client registration");
+      // A proxy or provider failure can occur after persistence. Retain the
+      // reservation even for non-201 responses; only an operator with
+      // authoritative reconciliation evidence may permit another attempt.
+      await this.markRegistrationUncertain(tenantId);
+      throw new ServiceUnavailableException({
+        code: "MCP_IDENTITY_DCR_REGISTRATION_OUTCOME_UNCERTAIN",
+        message: "ZITADEL identity registration was not confirmed; reconcile upstream clients before retrying",
+      });
     }
     // A malicious or compromised issuer response must not persist arbitrary
     // clients into the privileged issuer-global exact-client allowlist.
-    const raw = await boundedJson(response);
+    let raw: Record<string, unknown>;
+    try {
+      raw = await boundedJson(response);
+    } catch {
+      await this.markRegistrationUncertain(tenantId);
+      throw new ServiceUnavailableException({
+        code: "MCP_IDENTITY_DCR_REGISTRATION_OUTCOME_UNCERTAIN",
+        message: "ZITADEL MCP identity registration returned an unreadable accepted response; reconcile upstream clients before retrying",
+      });
+    }
     const clientId = raw.client_id;
     if (typeof clientId !== "string" || !/^\d{1,64}$/.test(clientId) ||
         !Array.isArray(raw.redirect_uris) ||
-        raw.redirect_uris.length !== 1 || raw.redirect_uris[0] !== this.callback(origin) ||
+        raw.redirect_uris.length !== 1 || raw.redirect_uris[0] !== callbackUri ||
         raw.token_endpoint_auth_method !== "none") {
-      throw new ServiceUnavailableException("ZITADEL MCP identity registration is invalid");
-    }
-    try {
-      await this.prisma.mcpOAuthUpstreamClient.create({ data: { tenantId, clientId } });
-      return clientId;
-    } catch (error) {
-      if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") {
-        throw error;
-      }
-      // Concurrent first connect is only allowed to use the existing DB
-      // record; the losing client's DCR app is *not* authorized by the Action.
-      const winner = await this.prisma.mcpOAuthUpstreamClient.findUnique({
-        where: { tenantId },
+      await this.markRegistrationUncertain(tenantId,
+        typeof clientId === "string" && /^\d{1,64}$/.test(clientId) ? clientId : undefined);
+      throw new ServiceUnavailableException({
+        code: "MCP_IDENTITY_DCR_REGISTRATION_OUTCOME_UNCERTAIN",
+        message: "ZITADEL MCP identity registration returned invalid accepted metadata; reconcile upstream clients before retrying",
+        ...(typeof clientId === "string" && /^\d{1,64}$/.test(clientId) ? { clientId } : {}),
       });
-      if (!winner) throw new ServiceUnavailableException("MCP upstream registration race");
-      return winner.clientId;
+    }
+    // Record the observed numeric client ID before attempting the binding;
+    // a failure or restart must leave enough non-secret data to reconcile.
+    await this.markRegistrationUncertain(tenantId, clientId);
+    try {
+      await this.prisma.$transaction(async tx => {
+        await tx.mcpOAuthUpstreamClient.create({ data: { tenantId, clientId } });
+        const updated = await tx.mcpOAuthUpstreamRegistration.updateMany({
+          where: { tenantId, status: { in: ["Pending", "Uncertain"] } },
+          data: { status: "Bound", observedClientId: clientId },
+        });
+        if (updated.count !== 1) throw new Error("Missing durable MCP identity registration reservation");
+      });
+      return clientId;
+    } catch {
+      // Binding and final state are atomic. An uncertain commit can be
+      // resolved by reading the existing binding on the next request.
+      // Never create another external client or expose the registration bearer.
+      throw new ServiceUnavailableException({
+        code: "MCP_IDENTITY_DCR_PARTIAL_REGISTRATION",
+        message: "ZITADEL MCP identity client was registered but its local binding was not confirmed; reconcile this client before retrying",
+        clientId,
+      });
+    }
+  }
+
+  private async markRegistrationUncertain(tenantId: string, clientId?: string) {
+    try {
+      await this.prisma.mcpOAuthUpstreamRegistration.updateMany({
+        where: { tenantId, status: { in: ["Pending", "Uncertain"] } },
+        data: { status: "Uncertain", ...(clientId === undefined ? {} : { observedClientId: clientId }) },
+      });
+    } catch {
+      // The initial committed Pending row is itself a permanent fail-closed
+      // barrier. Do not mask the sanitized registration outcome with DB details.
     }
   }
 
@@ -109,15 +224,31 @@ export class McpUpstreamLoginService {
     if (input.resource !== `${origin}/api/tenants/${input.tenantId}/mcp`) {
       throw new UnauthorizedException("MCP resource audience mismatch");
     }
+    // Validate all local/public redirect and issuer metadata BEFORE the
+    // non-idempotent upstream DCR registration. Invalid issuer discovery must
+    // not leave a newly accepted, unused ZITADEL client behind.
+    const callbackUri = this.callback(origin);
+    const discovery = await this.oidc.getDiscovery();
+    let authorizationUrl: URL;
+    try {
+      authorizationUrl = new URL(discovery.authorizationEndpoint);
+      const configuredIssuer = new URL(this.config.get<string>("OIDC_ISSUER_URL") ?? "");
+      if (authorizationUrl.protocol !== "https:" ||
+          authorizationUrl.origin !== configuredIssuer.origin ||
+          authorizationUrl.pathname !== "/oauth/v2/authorize" ||
+          authorizationUrl.search || authorizationUrl.hash ||
+          authorizationUrl.username || authorizationUrl.password) {
+        throw new Error("Untrusted issuer metadata");
+      }
+    } catch {
+      throw new ServiceUnavailableException("Untrusted ZITADEL authorization endpoint");
+    }
+    // A DCR client must never be created for an issuer whose OAuth code
+    // exchange endpoint is invalid. Validate BEFORE non-idempotent POST.
+    this.assertTrustedTokenEndpoint(discovery.tokenEndpoint);
     const clientId = await this.upstreamClient(input.tenantId, origin);
     const verifier = codeToken();
     const state = codeToken();
-    const discovery = await this.oidc.getDiscovery();
-    const authorizationUrl = new URL(discovery.authorizationEndpoint);
-    if (authorizationUrl.protocol !== "https:" ||
-        authorizationUrl.origin !== new URL(this.config.get<string>("OIDC_ISSUER_URL") ?? "").origin) {
-      throw new ServiceUnavailableException("Untrusted ZITADEL authorization endpoint");
-    }
     await this.prisma.mcpOAuthUpstreamLogin.create({ data: {
       stateHash: hash(state),
       clientId: input.clientId,
@@ -132,7 +263,7 @@ export class McpUpstreamLoginService {
       expiresAt: new Date(Date.now() + 600_000),
     } });
     authorizationUrl.searchParams.set("client_id", clientId);
-    authorizationUrl.searchParams.set("redirect_uri", this.callback(origin));
+    authorizationUrl.searchParams.set("redirect_uri", callbackUri);
     authorizationUrl.searchParams.set("response_type", "code");
     authorizationUrl.searchParams.set("scope", "openid profile email");
     authorizationUrl.searchParams.set("state", state);
@@ -148,18 +279,23 @@ export class McpUpstreamLoginService {
         typeof state !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(state)) {
       throw new UnauthorizedException("Invalid MCP identity OAuth callback");
     }
+    // Do not allow an invalid callback origin to burn a valid one-time login.
+    // The canonical public origin is verified before any state mutation.
+    this.callback(origin);
     const record = await this.prisma.mcpOAuthUpstreamLogin.findUnique({
       where: { stateHash: hash(state) },
     });
     if (!record || record.expiresAt.getTime() <= Date.now()) {
       throw new UnauthorizedException("Expired MCP identity OAuth state");
     }
-    const consumed = await this.prisma.mcpOAuthUpstreamLogin.deleteMany({
-      where: { stateHash: record.stateHash, expiresAt: { gt: new Date() } },
-    });
-    if (consumed.count !== 1) {
-      throw new UnauthorizedException("MCP identity OAuth state was already used");
-    }
+    // Check untrusted discovery metadata BEFORE consuming the one-time login
+    // state. A malformed token endpoint must neither receive a valid code
+    // nor permanently invalidate a legitimate pending callback.
+    const discovery = await this.oidc.getDiscovery();
+    this.assertTrustedTokenEndpoint(discovery.tokenEndpoint);
+    // Validate the tenant, current bound identity client and exact resource
+    // audience BEFORE consuming the pending state. Unauthorized callbacks
+    // must not DoS a legitimate user's ongoing authentication transaction.
     const upstreamClient = await this.prisma.mcpOAuthUpstreamClient.findUnique({
       where: { tenantId: record.tenantId },
     });
@@ -167,7 +303,12 @@ export class McpUpstreamLoginService {
         record.resource !== `${origin}/api/tenants/${record.tenantId}/mcp`) {
       throw new UnauthorizedException("MCP identity client or resource mismatch");
     }
-    const discovery = await this.oidc.getDiscovery();
+    const consumed = await this.prisma.mcpOAuthUpstreamLogin.deleteMany({
+      where: { stateHash: record.stateHash, expiresAt: { gt: new Date() } },
+    });
+    if (consumed.count !== 1) {
+      throw new UnauthorizedException("MCP identity OAuth state was already used");
+    }
     const response = await this.transport().fetch(discovery.tokenEndpoint, "code-exchange", {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -180,7 +321,20 @@ export class McpUpstreamLoginService {
       }),
       signal: AbortSignal.timeout(10_000),
     });
-    if (!response.ok) throw new UnauthorizedException("MCP identity code exchange denied");
+    if (!response.ok) {
+      // ZITADEL can return Errors.AuthRequest.NotFound even when the browser
+      // received a fresh code (#498). Classify the response without ever
+      // logging or returning code, state, verifier, upstream body or token.
+      const failure = await boundedJson(response).catch(() => null);
+      const missingRequest = failure?.error_description === "Errors.AuthRequest.NotFound" ||
+        failure?.error === "Errors.AuthRequest.NotFound";
+      throw new UnauthorizedException({
+        code: missingRequest ? "MCP_IDENTITY_AUTH_REQUEST_NOT_FOUND" : "MCP_IDENTITY_CODE_EXCHANGE_DENIED",
+        message: missingRequest
+          ? "The identity provider could not find this sign-in request; start a new sign-in"
+          : "MCP identity code exchange denied",
+      });
+    }
     const payload = await boundedJson(response);
     if (typeof payload.id_token !== "string" || payload.id_token.length > 32_768 ||
         typeof payload.access_token !== "string" || !payload.access_token ||

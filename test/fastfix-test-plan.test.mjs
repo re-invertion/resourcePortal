@@ -1129,7 +1129,7 @@ test("changing the real Swarm workflow runs both real core and VPN smoke gates",
   assert.equal(plan.swarmSmoke, true);
   for (const name of ["networking", "swarm-smoke-fixtures", "workflow"])
     assert.ok(plan.profiles.includes(name), name);
-  const unrelated = selectProfiles([".github/workflows/tenant-oidc-live.yml"]);
+  const unrelated = selectProfiles([".github/workflows/codex-review-recheck.yml"]);
   assert.equal(unrelated.vpnSmoke, false);
   assert.equal(unrelated.swarmSmoke, false);
 });
@@ -1246,4 +1246,37 @@ test("#399 §15 explicitly gates all changed app-group resources and platform fo
     () => selectProfiles(["packages/resourceportal-web/src/pages/platform-secret-unreviewed.tsx"]),
     /unclassified changes/,
   );
+});
+
+test("SSO security fixtures select real release gates and exact regressions", () => {
+  const paths = [
+    ...["device-project-grants", "device-unapproved", "totp"].map(x => "packages/resourceportal-api/scripts/tenant-oidc-" + x + "-e2e.ts"),
+    ...["audit-sandbox-dcr-orphans.mjs", "run-mcp-resource-oauth-postgres-e2e.cjs", "run-tenant-oidc-login-v2-e2e.sh", "tenant-oidc-login-v2-proxy.cjs"].map(x => "scripts/" + x),
+    "test/federation/docker-compose.yml", "test/federation/zitadel-init-steps.yaml", "test/federation/zitadel-config.yaml",
+    ...["consent-e2e.cjs", "docker-compose.yml", "fail-safe-error.cjs", "fail-safe-error.test.cjs", "smoke.cjs"].map(x => "test/tenant-oidc-login-v2/" + x),
+    "test/test-sandbox-dcr-audit.test.mjs", ".github/workflows/tenant-oidc-live.yml", ".github/workflows/tenant-oidc-login-v2.yml",
+  ];
+  for (const path of paths) {
+    const plan = selectProfiles([path]);
+    for (const profile of ["identity", "security", "workflow", "sso-live"]) assert.ok(plan.profiles.includes(profile), path + " / " + profile);
+    assert.equal(plan.swarmSmoke, true, path);
+    assert.equal(plan.vpnSmoke, false, path);
+    const commands = JSON.stringify(commandsForProfiles(plan.profiles));
+    for (const regression of ["test/test-sandbox-dcr-audit.test.mjs", "test/tenant-oidc-login-v2/fail-safe-error.test.cjs"]) assert.ok(commands.includes(regression), path);
+  }
+  assert.throws(() => selectProfiles(["test/tenant-oidc-login-v2/unreviewed.cjs"]), /unclassified changes/);
+});
+
+test("SEC-04 Login V2 evidence is mandatory regardless of change classification", () => {
+  for (const paths of [
+    [],
+    ["docs/advanced-networking-resourceportalgate.md"],
+    ["packages/resourceportal-api/src/auth/oidc-issuer-transport.ts"],
+    ["packages/resourceportal-api/src/mcp/mcp-oauth-dcr.service.ts"],
+    ["packages/resourceportal-api/src/security/new-auth.ts"],
+    ["test/federation/zitadel-config.yaml"],
+    [".github/workflows/tenant-oidc-login-v2.yml"],
+    [".github/workflows/release-readiness.yml"],
+    ["package-lock.json"],
+  ]) assert.equal(selectProfiles(paths).loginV2Required, true, paths.join(","));
 });

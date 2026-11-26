@@ -304,6 +304,47 @@ describe("TenantMcpProtocolService", () => {
     }
   });
 
+  it("preserves limited tenant RBAC: read succeeds but direct runtime start is denied and audited", async () => {
+    const { service, settings } = fixture();
+    const appGroupId = "44444444-4444-4444-8444-444444444444";
+    const seen: string[] = [];
+    const apiFetch = vi.fn((input: string | URL | Request, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      expect(request.headers.get("authorization")).toBe("Bearer limited-user-token");
+      const target = new URL(request.url);
+      expect(target.pathname.startsWith(`/api/tenants/${tenantId}/`)).toBe(true);
+      seen.push(`${request.method} ${target.pathname}`);
+      return Promise.resolve(new Response(JSON.stringify(
+        request.method === "GET" ? [{ id: appGroupId }] : { message: "Insufficient tenant permissions" },
+      ), { status: request.method === "GET" ? 200 : 403,
+        headers: { "content-type": "application/json" } }));
+    });
+    vi.stubGlobal("fetch", apiFetch);
+    const connection = await connectClient({ service,
+      request: mcpRequest({ authorization: "Bearer limited-user-token" }), authenticated: true });
+    try {
+      const read = await connection.client.callTool({
+        name: "resourceportal_list_app_groups", arguments: {},
+      });
+      expect(read.structuredContent).toMatchObject({ status: 200, ok: true });
+      const start = await connection.client.callTool({
+        name: "resourceportal_start_app_group", arguments: { appGroupId },
+      });
+      expect(start.isError).toBe(true);
+      expect(start.structuredContent).toMatchObject({ status: 403, ok: false });
+      expect(seen).toEqual([
+        `GET /api/tenants/${tenantId}/app-groups`,
+        `POST /api/tenants/${tenantId}/app-groups/${appGroupId}/runtime/start`,
+      ]);
+      expect(settings.recordToolCall).toHaveBeenCalledWith(expect.objectContaining({
+        toolName: "resourceportal_list_app_groups", method: "GET", success: true, statusCode: 200,
+      }));
+      expect(settings.recordToolCall).toHaveBeenCalledWith(expect.objectContaining({
+        toolName: "resourceportal_start_app_group", method: "POST", success: false, statusCode: 403,
+      }));
+    } finally { await connection.close(); }
+  });
+
   it("delegates RP resource tokens only to loopback and rechecks current MCP allow-list", async () => {
     const { service, settings, delegation } = fixture();
     const apiFetch = vi.fn((input: string | URL | Request, init?: RequestInit) => {

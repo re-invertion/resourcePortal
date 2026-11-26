@@ -1394,21 +1394,9 @@ export class TenantsService {
   ) {
     const tenant = await this.ensureTenantExists(tenantId);
     const existing = await this.findMembershipOrThrow(tenantId, membershipId);
-    // Administrators may manage app grants and RBAC independently, but never
-    // change their own membership through this management endpoint.
-    if (actor.id === existing.userId && (dto.roleIds !== undefined || dto.status !== undefined ||
-        dto.oauthApplicationIds !== undefined || dto.nativeApplicationKeys !== undefined)) {
-      throw new ForbiddenException("Self-service membership changes are forbidden");
-    }
-
     if (dto.roleIds !== undefined) {
       await this.ensureRolesExist(dto.roleIds);
     }
-    await this.assertOwnerRoleChangeAllowed(
-      tenantId,
-      actor,
-      [...existing.roles.map(({ role }) => role.id), ...(dto.roleIds ?? [])],
-    );
     if (dto.nativeApplicationKeys?.some(key => key !== "web" && key !== "cli")) {
       throw new BadRequestException("Invalid ResourcePortal client key");
     }
@@ -1419,6 +1407,61 @@ export class TenantsService {
         where: { id: membershipId, tenantId }, include: this.membershipIncludes(),
       });
       if (!lockedMembership) throw new NotFoundException("TenantMembership not found");
+      // Recheck the actor's current effective RBAC while holding the same
+      // tenant lock as the mutation. Do not rely on the request guard's
+      // earlier authorization snapshot or on legacy Role.permissions arrays.
+      const permittedRole = {
+        id: { not: "sso-login" },
+        permissionBindings: { some: { permissionId: { in: ["membership.update", "*"] } } },
+      };
+      const liveActor = await tx.tenantMembership.findUnique({
+        where: {
+          userId_tenantId: { userId: actor.id, tenantId },
+          status: MembershipStatus.Active,
+          user: { status: UserStatus.Active },
+          OR: [
+            { roles: { some: { role: permittedRole } } },
+            { groupMemberships: { some: { group: { roles: { some: { role: permittedRole } } } } } },
+          ],
+        },
+        select: { roles: { select: { roleId: true } } },
+      });
+      if (!liveActor) throw new ForbiddenException("Current membership.update permission is required");
+      const changesOwner = lockedMembership.roles.some(({ role }) => role.id === TENANT_OWNER_ROLE_ID) ||
+        (dto.roleIds?.includes(TENANT_OWNER_ROLE_ID) ?? false);
+      if (changesOwner && !liveActor.roles.some(({ roleId }) => roleId === TENANT_OWNER_ROLE_ID)) {
+        throw new ForbiddenException("Only an active tenant owner can manage Owner roles");
+      }
+      // The membership.update permission also permits managing one's own access.
+      // Active Owners already hold tenant-wide privileges. Other administrators
+      // may revoke/downgrade their own access, but cannot self-assign roles,
+      // enable previously disabled RP/OAuth application grants, or reactivate
+      // their own membership. Check the row locked by this transaction so a
+      // concurrent membership change cannot turn a downgrade into escalation.
+      if (lockedMembership.userId === actor.id &&
+          !(lockedMembership.status === MembershipStatus.Active &&
+            lockedMembership.roles.some(({ role }) => role.id === TENANT_OWNER_ROLE_ID))) {
+        const currentRoles = new Set(lockedMembership.roles.map(({ role }) => role.id));
+        const currentOAuthGrants = new Set(
+          lockedMembership.appGrants.filter((grant) => grant.enabled)
+            .map((grant) => grant.oauthApplicationId),
+        );
+        const currentNativeGrants = new Set(
+          lockedMembership.nativeAppGrants.filter((grant) => grant.enabled)
+            .map((grant) => grant.clientKey),
+        );
+        const selfEscalation =
+          (dto.status !== undefined && dto.status !== lockedMembership.status &&
+            dto.status !== MembershipStatus.Suspended) ||
+          (dto.roleIds?.some((roleId) => !currentRoles.has(roleId)) ?? false) ||
+          (dto.oauthApplicationIds?.some((id) => !currentOAuthGrants.has(id)) ?? false) ||
+          (dto.nativeApplicationKeys?.some((key) => !currentNativeGrants.has(key)) ?? false);
+        if (selfEscalation) {
+          throw new ForbiddenException(
+            "You cannot grant yourself additional roles, application access or reactivate your membership",
+          );
+        }
+      }
       if (dto.status === MembershipStatus.Suspended) {
         await this.tenantOidc?.revokeGrantBeforeMembershipRemoval(tenantId, lockedMembership.userId, tx);
       }

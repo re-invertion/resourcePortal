@@ -32,7 +32,7 @@ services:
       retries: 30
 
   zitadel:
-    image: ghcr.io/zitadel/zitadel:${ZITADEL_VERSION:-v4.17.0}
+    image: ghcr.io/zitadel/zitadel:${ZITADEL_VERSION:-v4.19.5}
     network_mode: host
     user: "0"
     command:

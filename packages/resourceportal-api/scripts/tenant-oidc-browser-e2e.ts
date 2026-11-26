@@ -13,12 +13,15 @@ export async function runOidcAuthorizationE2E(input: {
   projectId: string;
   foreignProjectId: string;
   clientId: string;
+  /** Confidential Web client secret; empty only for public Native/SPA PKCE clients. */
   clientSecret: string;
   userId: string;
   userName: string;
   password: string;
   /** Preserve an active refresh token only for the isolated per-client proof. */
   skipLogout?: boolean;
+  /** Negative assertion on the actual isolated HTTPS issuer, never production. */
+  assertCodeReplayDenied?: boolean;
 }) {
   assert.equal(input.issuer, "https://localhost:8443");
   const discovery = await (await fetch(input.issuer + "/.well-known/openid-configuration")).json() as {
@@ -112,16 +115,48 @@ export async function runOidcAuthorizationE2E(input: {
     const body = new URLSearchParams({
       grant_type: "authorization_code", code, redirect_uri: callback, code_verifier: challengeVerifier,
     });
+    // Public Native/SPA clients MUST send client_id in the form body and MUST
+    // NOT authenticate with a fabricated Basic secret. Both modes still use
+    // PKCE S256, the exact registered redirect and the same issuer checks.
+    if (!input.clientSecret) body.set("client_id", input.clientId);
+    const tokenHeaders = {
+      "content-type": "application/x-www-form-urlencoded",
+      ...(input.clientSecret
+        ? { authorization: "Basic " + Buffer.from(input.clientId + ":" + input.clientSecret).toString("base64") }
+        : {}),
+    };
     const tokenResponse = await fetch(discovery.token_endpoint, {
       method: "POST",
-      headers: {
-        "content-type": "application/x-www-form-urlencoded",
-        authorization: "Basic " + Buffer.from(input.clientId + ":" + input.clientSecret).toString("base64"),
-      },
+      headers: tokenHeaders,
       body,
       signal: AbortSignal.timeout(20000),
     });
-    if (!tokenResponse.ok) throw new Error("ZITADEL code exchange denied HTTP " + tokenResponse.status);
+    if (!tokenResponse.ok) {
+      // A healthy discovery/authorize callback does not prove that ZITADEL
+      // persisted the authorization request until redemption (#498).
+      // Classify only the known failure signature. Never print the response,
+      // one-time code, verifier, state, URL query or upstream request body.
+      const errorBody = await tokenResponse.text().catch(() => "");
+      const reason = errorBody.includes("Errors.AuthRequest.NotFound")
+        ? "OIDC_AUTH_REQUEST_NOT_FOUND" : "OIDC_TOKEN_EXCHANGE_DENIED";
+      throw new Error("ZITADEL " + reason + " HTTP " + tokenResponse.status);
+    }
+    if (input.assertCodeReplayDenied) {
+      // The same authorization code was just consumed by a real confidential
+      // Web + PKCE exchange. It must not be redeemable twice (#498).
+      // Never log the code, verifier, Basic header, callback URL or response.
+      const replayResponse = await fetch(discovery.token_endpoint, {
+        method: "POST",
+        headers: tokenHeaders,
+        body: new URLSearchParams(body),
+        signal: AbortSignal.timeout(20000),
+      });
+      assert.ok(!replayResponse.ok,
+        "SECURITY: real HTTPS issuer accepted a consumed authorization code a second time");
+      assert.ok(replayResponse.status >= 400 && replayResponse.status < 500,
+        "Expected a deterministic OAuth client rejection for an already-consumed code");
+      console.log("PASS: real HTTPS ZITADEL rejects replay of an already-redeemed PKCE code (#498)");
+    }
     const tokens = await tokenResponse.json() as { id_token?: string; access_token?: string; refresh_token?: string };
     assert.ok(tokens.id_token && tokens.access_token && tokens.refresh_token,
       "OIDC exchange returned incomplete tokens (including offline refresh)");
@@ -142,15 +177,14 @@ export async function runOidcAuthorizationE2E(input: {
       "Real token omitted the tenant's membership role");
     // Exercise an actual refresh while the grant is still active, not merely
     // the presence of an unused refresh token in the initial response.
+    const refreshBody = new URLSearchParams({
+      grant_type: "refresh_token", refresh_token: tokens.refresh_token,
+    });
+    if (!input.clientSecret) refreshBody.set("client_id", input.clientId);
     const refreshResponse = await fetch(discovery.token_endpoint, {
       method: "POST",
-      headers: {
-        "content-type": "application/x-www-form-urlencoded",
-        authorization: "Basic " + Buffer.from(input.clientId + ":" + input.clientSecret).toString("base64"),
-      },
-      body: new URLSearchParams({
-        grant_type: "refresh_token", refresh_token: tokens.refresh_token,
-      }),
+      headers: tokenHeaders,
+      body: refreshBody,
       signal: AbortSignal.timeout(20000),
     });
     if (!refreshResponse.ok) throw new Error("Live OIDC refresh denied HTTP " + refreshResponse.status);

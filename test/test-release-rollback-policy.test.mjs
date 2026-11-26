@@ -153,7 +153,7 @@ test("schema-changing rollback requires exact run-bound live evidence", () => {
     { ...evidence, zitadelSourceRuntimeReadyAfterRollback: "true" },
     { ...evidence, zitadelSourceEventstoreVerified: 1 },
     { ...evidence, candidateZitadelRuntimeReadyBeforeRollback: null },
-    { ...evidence, candidateZitadelImage: "ghcr.io/zitadel/zitadel:v4.17.0" },
+    { ...evidence, candidateZitadelImage: "ghcr.io/zitadel/zitadel:v4.19.5" },
     { ...evidence, candidateZitadelImage: undefined },
     { ...evidence, sourceZitadelImage: "ghcr.io/malicious/zitadel@sha256:" + "f".repeat(64) },
   ]) assert.throws(() => requireAutomaticRollback(result, malformed), /Release blocked/);

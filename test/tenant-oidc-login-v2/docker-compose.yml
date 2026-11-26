@@ -1,0 +1,28 @@
+# Real Login V2 FRONTEND and API only on disposable GitHub-hosted Docker.
+services:
+  zitadel:
+    environment:
+      ZITADEL_PORT: "8080"
+      ZITADEL_EXTERNALDOMAIN: localhost
+      ZITADEL_EXTERNALPORT: "8443"
+      ZITADEL_EXTERNALSECURE: "true"
+      ZITADEL_TLS_ENABLED: "false"
+      ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_REQUIRED: "true"
+      ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_BASEURI: https://localhost:8443/ui/v2/login/
+      ZITADEL_OIDC_DEFAULTLOGINURLV2: https://localhost:8443/ui/v2/login/login?authRequest=
+      ZITADEL_OIDC_DEFAULTLOGOUTURLV2: https://localhost:8443/ui/v2/login/logout?post_logout_redirect=
+      ZITADEL_SAML_DEFAULTLOGINURLV2: https://localhost:8443/ui/v2/login/login?samlRequest=
+  zitadel-login:
+    image: ghcr.io/zitadel/zitadel-login:v4.19.5
+    network_mode: host
+    environment:
+      ZITADEL_API_URL: http://127.0.0.1:8080
+      NEXT_PUBLIC_BASE_PATH: /ui/v2/login
+      ZITADEL_SERVICE_USER_TOKEN_FILE: /bootstrap/login-client.pat
+      ZITADEL_SESSION_COOKIE_SECRET: $LOGIN_SESSION_COOKIE_SECRET
+      CUSTOM_REQUEST_HEADERS: Host:localhost:8443,X-Forwarded-Proto:https
+    volumes:
+      - ../../var/federation/zitadel:/bootstrap:ro
+    depends_on:
+      zitadel:
+        condition: service_started

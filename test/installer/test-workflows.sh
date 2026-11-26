@@ -89,7 +89,25 @@ contains_file "$repo_root/.github/workflows/release.yml" '"./cli-release/resourc
 release_zitadel_version="$(grep -oE 'ghcr.io/zitadel/zitadel:v[0-9]+\.[0-9]+\.[0-9]+' "$repo_root/.github/workflows/release.yml" | head -n1 | sed 's#.*:##')"
 federation_zitadel_version="$(grep -oE 'ZITADEL_VERSION: v[0-9]+\.[0-9]+\.[0-9]+' "$repo_root/.github/workflows/federation-integration.yml" | head -n1 | awk '{print $2}')"
 if [[ "$release_zitadel_version" == "$federation_zitadel_version" ]]; then pass 'Release and federation pin the same ZITADEL version'; else printf 'release=%s federation=%s\n' "$release_zitadel_version" "$federation_zitadel_version" >&2; fail 'Release and federation pin the same ZITADEL version'; fi
-contains_file "$repo_root/.github/workflows/release.yml" 'ghcr.io/zitadel/zitadel:v4.17.0' 'Release pins ZITADEL with Dynamic Client Registration support'
+# CVE-2026-119129: v4.17.0 could approve device grants without the
+# expected explicit consent/project checks. Require >= v4.19.5, and require
+# the HTTPS integration and rollback candidate to exercise that same release.
+minimum_zitadel_version=v4.19.5
+if [[ -n "$release_zitadel_version" ]] &&
+   [[ "$(printf '%s\n' "$minimum_zitadel_version" "$release_zitadel_version" | sort -V | head -n1)" == "$minimum_zitadel_version" ]]; then
+  pass 'Release ZITADEL image includes the Device Authorization security patch'
+else
+  fail 'Release ZITADEL image includes the Device Authorization security patch'
+fi
+contains_file "$repo_root/.github/workflows/release.yml" "ghcr.io/zitadel/zitadel:$release_zitadel_version" 'Release explicitly pins ZITADEL candidate image'
+contains_file "$repo_root/.github/workflows/tenant-oidc-live.yml" "ZITADEL_VERSION: $release_zitadel_version" 'HTTPS tenant OIDC E2E uses the release ZITADEL version'
+contains_file "$repo_root/scripts/run-tenant-oidc-https-e2e.sh" "export ZITADEL_VERSION=$release_zitadel_version" 'HTTPS runner cannot silently revert to a vulnerable ZITADEL image'
+readiness_zitadel_images="$(grep -Eo 'RP_ROLLBACK_CANDIDATE_ZITADEL_IMAGE: ghcr.io/zitadel/zitadel:v[0-9]+\.[0-9]+\.[0-9]+' "$repo_root/.github/workflows/release-readiness.yml" | awk '{print $2}' | sort -u)"
+if [[ "$readiness_zitadel_images" == "ghcr.io/zitadel/zitadel:$release_zitadel_version" ]]; then
+  pass 'All readiness rollback candidates use the release ZITADEL version'
+else
+  fail 'All readiness rollback candidates use the release ZITADEL version'
+fi
 
 contains_file "$repo_root/.github/workflows/release.yml" 'assets+=(resourceportal-upgrade-recovery.sh)' 'v0.2.71 publishes legacy updater recovery asset'
 if (( failures > 0 )); then printf '%s workflow test(s) failed\n' "$failures" >&2; exit 1; fi

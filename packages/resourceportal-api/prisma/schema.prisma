@@ -234,6 +234,7 @@ model Tenant {
   mcpOAuthCodes              McpOAuthCode[]
   mcpOAuthPendingConsents    McpOAuthPendingConsent[]
   mcpOAuthUpstreamClient    McpOAuthUpstreamClient?
+  mcpOAuthUpstreamRegistration McpOAuthUpstreamRegistration?
   mcpOAuthUpstreamLogins    McpOAuthUpstreamLogin[]
   mcpOAuthBrowserSessions  McpOAuthBrowserSession[]
   mcpOAuthGrants             McpOAuthGrant[]
@@ -376,6 +377,18 @@ model McpOAuthUpstreamClient {
   clientId     String   @unique
   createdAt    DateTime @default(now())
   tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+/// Durable non-expiring first-registration reservation, separate from the
+/// issuer's successfully bound exact-client allowlist. An operator must
+/// reconcile uncertain registrations before another provider POST is allowed.
+model McpOAuthUpstreamRegistration {
+  tenantId         String   @id @db.Uuid
+  status           String   @default("Pending")
+  observedClientId String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 }
 
 model McpOAuthUpstreamLogin {
