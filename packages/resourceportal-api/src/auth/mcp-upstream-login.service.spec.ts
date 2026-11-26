@@ -227,7 +227,9 @@ describe("#442 MCP identity-only upstream OAuth PKCE, tenant scope and replay", 
     expect(f.transport).not.toHaveBeenCalled();
     expect(f.reservations.size).toBe(0);
     f.config.get.mockImplementation(original);
-    await expect(f.svc.start(input, origin)).resolves.toMatchObject({ url: expect.any(String) });
+    const result = await f.svc.start(input, origin);
+    expect(typeof result.url).toBe("string");
+    expect(new URL(result.url).origin).toBe(new URL(discovery.authorizationEndpoint).origin);
     expect(f.reservations.get(tenant)?.status).toBe("Bound");
   });
 
