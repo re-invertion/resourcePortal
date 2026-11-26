@@ -19,15 +19,31 @@ type ProjectSearchResponse = {
 };
 
 type DcrOidcConfig = {
-  clientId?: string;
-  responseTypes?: string[];
-  grantTypes?: string[];
+  responseTypes: string[];
+  grantTypes: string[];
 };
 
-type AppSearchResponse = {
-  result?: Array<{ id?: string; oidcConfig?: DcrOidcConfig }>;
-  details?: { totalResult?: number | string };
-};
+type ExactDcrApp = { id: string; oidcConfig: DcrOidcConfig };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isStringList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.length > 0 &&
+    value.every(item => typeof item === "string" && item.length > 0);
+}
+
+/** Positive matches require an explicit total; protobuf omits a zero total. */
+function readSearchTotal(details: unknown): number | null {
+  if (!isRecord(details)) return null;
+  const raw = details.totalResult;
+  if (raw === undefined) return 0;
+  if (typeof raw !== "number" && typeof raw !== "string") return null;
+  if (typeof raw === "string" && !/^\d+$/.test(raw)) return null;
+  const total = Number(raw);
+  return Number.isSafeInteger(total) && total >= 0 ? total : null;
+}
 
 @Injectable()
 export class McpOAuthDcrService {
@@ -180,72 +196,74 @@ export class McpOAuthDcrService {
         {},
         deadline,
       );
-      const matches = (projects.result ?? []).filter((candidate) =>
-        candidate.name === "ZITADEL DCR" && Boolean(candidate.id));
-      const rawTotal = projects.details?.totalResult;
-      const total = rawTotal === undefined ? matches.length : Number(rawTotal);
-      if (matches.length > 1 || total > 1 || !Number.isSafeInteger(total)) {
+      const total = readSearchTotal(projects.details);
+      const matches = projects.result === undefined ? [] : projects.result;
+      if (total === null || !Array.isArray(matches) || total > 1 || matches.length > 1) {
         throw new BadGatewayException("ZITADEL DCR project search was ambiguous");
       }
-      const project = matches[0];
-      if (project?.id) return project.id;
+      if (total === 1 && matches.length === 1) {
+        const project: unknown = matches[0];
+        if (!isRecord(project) || project.name !== "ZITADEL DCR" ||
+            typeof project.id !== "string" || !project.id) {
+          throw new BadGatewayException("ZITADEL DCR project search returned an untrusted identity");
+        }
+        return project.id;
+      }
+      if (total !== 0 || matches.length !== 0) {
+        throw new BadGatewayException("ZITADEL DCR project search was incomplete");
+      }
       await sleep(100);
     }
     throw new BadGatewayException("ZITADEL DCR project was not visible after registration");
   }
 
-  private async findDcrApp(projectId: string, clientId: string, deadline: number) {
-    // ListApps defaults to 100 results. Polling only the first page retries
-    // the wrong set forever as more DCR clients accumulate. Page through the
-    // bounded result set while honoring the existing registration deadline.
-    const pageSize = 100;
-    const maxPages = 20;
+  private async findDcrApp(projectId: string, clientId: string, deadline: number): Promise<ExactDcrApp> {
+    // The pinned ZITADEL ApplicationService V2 implements exact project/client
+    // filters combined with AND. Query only the newly registered identity,
+    // never a global inventory page. Limit two detects ambiguity independently
+    // of unrelated registrations and provider inventory churn.
     for (let attempt = 0; attempt < 50; attempt += 1) {
-      let match: NonNullable<AppSearchResponse["result"]>[number] | undefined;
-      let complete = false;
-      for (let page = 0; page < maxPages; page += 1) {
-        const offset = page * pageSize;
-        const apps = await this.managementRequest<AppSearchResponse>(
-          "POST",
-          `/management/v1/projects/${encodeURIComponent(projectId)}/apps/_search`,
-          { query: { limit: pageSize, offset } },
-          {},
-          deadline,
-        );
-        // DCR client IDs are supposed to be unique, but do not trust a
-        // single page: validate the entire bounded project search before
-        // modifying any upstream application.
-        const results = apps.result ?? [];
-        if (!Array.isArray(results) || results.length > pageSize) {
-          throw new BadGatewayException("ZITADEL DCR application search returned invalid page");
-        }
-        for (const candidate of results) {
-          if (candidate.oidcConfig?.clientId !== clientId) continue;
-          if (!candidate.id || match) {
-            throw new BadGatewayException("ZITADEL DCR application search was ambiguous");
-          }
-          match = candidate;
-        }
-        // The projection can advertise a total before its records exist.
-        // Retry an empty page instead of accepting a partial snapshot.
-        if (results.length === 0) break;
-        const rawTotal = apps.details?.totalResult;
-        const parsed = Number(rawTotal);
-        const total = rawTotal !== undefined && Number.isSafeInteger(parsed) && parsed >= 0
-          ? parsed : null;
-        if (results.length < pageSize || (total !== null && offset + results.length >= total)) {
-          if (total !== null && offset + results.length < total) {
-            throw new BadGatewayException("ZITADEL DCR application search was incomplete");
-          }
-          complete = true;
-          break;
-        }
+      const response = await this.managementRequest<Record<string, unknown>>(
+        "POST",
+        "/zitadel.application.v2.ApplicationService/ListApplications",
+        {
+          pagination: { limit: 2 },
+          filters: [
+            { projectIdFilter: { projectId } },
+            { clientIdFilter: { clientId } },
+          ],
+        },
+        { "connect-protocol-version": "1" },
+        deadline,
+      );
+      const total = readSearchTotal(response.pagination);
+      const applications = response.applications === undefined ? [] : response.applications;
+      if (total === null || !Array.isArray(applications) || applications.length > 2) {
+        throw new BadGatewayException("ZITADEL DCR application search was invalid");
       }
-      if (!complete && match) {
+      if (total > 1 || applications.length > 1) {
+        throw new BadGatewayException("ZITADEL DCR application search was ambiguous");
+      }
+      if (total === 0 && applications.length === 0) {
+        // Zero (including omitted proto3 zero) is normal until projection.
+        // Retry only this read, within the original registration deadline.
+        await sleep(100);
+        continue;
+      }
+      if (total !== 1 || applications.length !== 1) {
         throw new BadGatewayException("ZITADEL DCR application search was incomplete");
       }
-      if (match?.id && complete) return match as typeof match & { id: string };
-      await sleep(100);
+      const app: unknown = applications[0];
+      if (!isRecord(app) || typeof app.applicationId !== "string" || !app.applicationId ||
+          app.projectId !== projectId || app.state !== "APPLICATION_STATE_ACTIVE" ||
+          !isRecord(app.oidcConfiguration) || app.oidcConfiguration.clientId !== clientId) {
+        throw new BadGatewayException("ZITADEL DCR application search returned an untrusted identity");
+      }
+      const { responseTypes, grantTypes } = app.oidcConfiguration;
+      if (!isStringList(responseTypes) || !isStringList(grantTypes)) {
+        throw new BadGatewayException("ZITADEL DCR application OAuth configuration was incomplete after registration");
+      }
+      return { id: app.applicationId, oidcConfig: { responseTypes, grantTypes } };
     }
     throw new BadGatewayException("ZITADEL DCR application was not visible after registration");
   }

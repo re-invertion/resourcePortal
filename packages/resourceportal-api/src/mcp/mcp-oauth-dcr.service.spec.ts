@@ -4,6 +4,22 @@ import { McpOAuthDcrService } from "./mcp-oauth-dcr.service";
 
 const originalFetch = global.fetch;
 
+function appRow(applicationId = "app-1", clientId = "client-1", projectId = "dcr-project") {
+  return {
+    applicationId, projectId, state: "APPLICATION_STATE_ACTIVE",
+    oidcConfiguration: {
+      clientId, responseTypes: ["OIDC_RESPONSE_TYPE_CODE"],
+      grantTypes: ["OIDC_GRANT_TYPE_AUTHORIZATION_CODE", "OIDC_GRANT_TYPE_REFRESH_TOKEN"],
+    },
+  };
+}
+
+function exactApp(clientId = "client-1", applicationId = "app-1", projectId = "dcr-project") {
+  return Response.json({ pagination: { totalResult: "1", appliedLimit: "2" },
+    applications: [appRow(applicationId, clientId, projectId)] });
+}
+
+
 function service() {
   return new McpOAuthDcrService({
     get: vi.fn((key: string) =>
@@ -87,30 +103,11 @@ describe("McpOAuthDcrService", () => {
         ),
       )
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ result: [{ id: "dcr-project", name: "ZITADEL DCR" }] }), {
+        new Response(JSON.stringify({ details: { totalResult: 1 }, result: [{ id: "dcr-project", name: "ZITADEL DCR" }] }), {
           status: 200,
         }),
       )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            result: [
-              {
-                id: "app-1",
-                oidcConfig: {
-                  clientId: "client-1",
-                  responseTypes: ["OIDC_RESPONSE_TYPE_CODE"],
-                  grantTypes: [
-                    "OIDC_GRANT_TYPE_AUTHORIZATION_CODE",
-                    "OIDC_GRANT_TYPE_REFRESH_TOKEN",
-                  ],
-                },
-              },
-            ],
-          }),
-          { status: 200 },
-        ),
-      )
+      .mockResolvedValueOnce(exactApp())
       .mockResolvedValueOnce(new Response("{}", { status: 200 }));
     global.fetch = fetchMock as typeof fetch;
 
@@ -154,76 +151,73 @@ describe("McpOAuthDcrService", () => {
     expect(managementOptions.headers).not.toHaveProperty("x-zitadel-orgid");
   });
 
-  it("converts a newly registered DCR app on the second ZITADEL search page", async () => {
-    const otherApps = Array.from({ length: 100 }, (_, index) => ({
-      id: `another-app-${index}`,
-      oidcConfig: { clientId: `another-client-${index}` },
-    }));
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        client_id: "client-on-page-two",
-        registration_access_token: "registration-token",
-        registration_client_uri: "https://auth.resource-portal.test/oauth/v2/register/client-on-page-two",
-      }), { status: 201 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        result: [{ id: "dcr-project", name: "ZITADEL DCR" }],
-      })))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        details: { totalResult: 101 }, result: otherApps,
-      })))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        details: { totalResult: 101 },
-        result: [{ id: "app-on-page-two", oidcConfig: {
-          clientId: "client-on-page-two",
-          responseTypes: ["OIDC_RESPONSE_TYPE_CODE"],
-          grantTypes: ["OIDC_GRANT_TYPE_AUTHORIZATION_CODE"],
-        } }],
-      })))
-      .mockResolvedValueOnce(new Response("{}"));
-    global.fetch = fetchMock as typeof fetch;
-
-    await expect(service().register({ redirect_uris: ["https://chatgpt.com/connector/oauth/example"] }))
-      .resolves.toMatchObject({ status: 201 });
-    expect(fetchMock).toHaveBeenCalledTimes(5);
-    const options = fetchMock.mock.calls[3]?.[1] as RequestInit;
-    expect(JSON.parse((options.body as string)) as unknown).toEqual({ query: { limit: 100, offset: 100 } });
-    expect(fetchMock.mock.calls[4]?.[0]).toBe(
-      "http://zitadel:8080/zitadel.application.v2.ApplicationService/UpdateApplication",
-    );
+  it.each([100, 2_001, 50_000])("converts an exact client in a shared inventory of %i applications without scanning it", async (inventorySize) => {
+    const clientId = "target-client";
+    const fetchMock = vi.fn((url: string, options: RequestInit) => {
+      if (url.endsWith("/oauth/v2/register")) return Promise.resolve(Response.json({
+        client_id: clientId, registration_access_token: "registration-token",
+        registration_client_uri: "https://auth.resource-portal.test/oauth/v2/register/" + clientId,
+      }, { status: 201 }));
+      if (url.endsWith("/projects/_search")) return Promise.resolve(Response.json({
+        details: { totalResult: 1 }, result: [{ id: "dcr-project", name: "ZITADEL DCR" }],
+      }));
+      if (url.endsWith("/apps/_search")) return Promise.resolve(Response.json({
+        details: { totalResult: inventorySize }, result: [],
+      }));
+      if (url.endsWith("/ListApplications")) {
+        expect(options.headers).toMatchObject({ "connect-protocol-version": "1" });
+        expect(JSON.parse(options.body as string) as unknown).toEqual({
+          pagination: { limit: 2 },
+          filters: [{ projectIdFilter: { projectId: "dcr-project" } }, { clientIdFilter: { clientId } }],
+        });
+        return Promise.resolve(exactApp(clientId, "target-app"));
+      }
+      expect(url).toBe("http://zitadel:8080/zitadel.application.v2.ApplicationService/UpdateApplication");
+      expect(JSON.parse(options.body as string) as unknown).toMatchObject({
+        projectId: "dcr-project", applicationId: "target-app",
+        oidcConfiguration: { accessTokenType: "OIDC_TOKEN_TYPE_JWT" },
+      });
+      return Promise.resolve(Response.json({}));
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    await expect(service().register({})).resolves.toMatchObject({ status: 201 });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock.mock.calls.some(([url]) => url.endsWith("/apps/_search"))).toBe(false);
   });
 
-  it("never modifies one DCR app when another page repeats the same OAuth client ID", async () => {
-    const first = Array.from({ length: 100 }, (_, index) => ({
-      id: `other-${index}`,
-      oidcConfig: { clientId: `unrelated-${index}` },
-    }));
-    first[0] = { id: "duplicate-a", oidcConfig: { clientId: "client-1" } };
+  it.each([
+    { title: "duplicate", total: 2, rows: [appRow(), appRow("second-app")] },
+    { title: "truncated duplicate", total: 2, rows: [appRow()] },
+    { title: "missing total", total: undefined, rows: [appRow()] },
+    { title: "malformed total", total: "1e0", rows: [appRow()] },
+    { title: "missing application", total: 1, rows: [] },
+    { title: "foreign project", total: 1, rows: [{ ...appRow(), projectId: "foreign-project" }] },
+    { title: "foreign client", total: 1, rows: [{ ...appRow(), oidcConfiguration: { ...appRow().oidcConfiguration, clientId: "foreign-client" } }] },
+    { title: "inactive client", total: 1, rows: [{ ...appRow(), state: "APPLICATION_STATE_INACTIVE" }] },
+    { title: "missing id", total: 1, rows: [{ ...appRow(), applicationId: "" }] },
+    { title: "malformed grant types", total: 1, rows: [{ ...appRow(), oidcConfiguration: { ...appRow().oidcConfiguration, grantTypes: [42] } }] },
+  ])("never updates an ambiguous or malformed exact result: $title", async ({ total, rows }) => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({
+      .mockResolvedValueOnce(Response.json({
         client_id: "client-1", registration_access_token: "sensitive-token",
         registration_client_uri: "https://auth.resource-portal.test/oauth/v2/register/client-1",
-      }), { status: 201 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        result: [{ id: "dcr-project", name: "ZITADEL DCR" }],
-      })))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        details: { totalResult: 101 }, result: first,
-      })))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        details: { totalResult: 101 }, result: [{
-          id: "duplicate-b", oidcConfig: { clientId: "client-1" },
-        }],
-      })))
+      }, { status: 201 }))
+      .mockResolvedValueOnce(Response.json({
+        details: { totalResult: 1 }, result: [{ id: "dcr-project", name: "ZITADEL DCR" }],
+      }))
+      .mockResolvedValueOnce(Response.json({ pagination: { totalResult: total }, applications: rows }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
       .mockResolvedValueOnce(new Response(null, { status: 404 }));
     global.fetch = fetchMock as typeof fetch;
-    await expect(service().register({})).rejects.toThrow("DCR application search was ambiguous");
-    expect(fetchMock).toHaveBeenCalledTimes(6);
-    expect(fetchMock.mock.calls[4]?.[0]).toBe(
+    await expect(service().register({})).rejects.toThrow("ZITADEL DCR application");
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+    expect(fetchMock).toHaveBeenNthCalledWith(4,
       "http://zitadel:8080/oauth/v2/register/client-1",
-    );
-    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("UpdateApplication")))
-      .toBe(false);
+      expect.objectContaining({ method: "DELETE", redirect: "error" }));
+    expect(fetchMock).toHaveBeenNthCalledWith(5,
+      "http://zitadel:8080/oauth/v2/register/client-1",
+      expect.objectContaining({ method: "GET", redirect: "error" }));
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("UpdateApplication"))).toBe(false);
   });
 
   it("fails closed and rolls back when ZITADEL lists ambiguous DCR projects", async () => {
@@ -252,28 +246,25 @@ describe("McpOAuthDcrService", () => {
     });
   });
 
-  it("retries an empty omitted ListApps result until the newly registered client is projected", async () => {
+  it("retries protobuf zero exact results until the newly registered client is projected", async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        client_id: "eventual-client",
-        registration_access_token: "registration-token",
+      .mockResolvedValueOnce(Response.json({
+        client_id: "eventual-client", registration_access_token: "registration-token",
         registration_client_uri: "https://auth.resource-portal.test/oauth/v2/register/eventual-client",
-      }), { status: 201 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        result: [{ id: "dcr-project", name: "ZITADEL DCR" }],
-      })))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ details: { totalResult: 1 } })))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        result: [{ id: "eventual-app", oidcConfig: {
-          clientId: "eventual-client",
-          responseTypes: ["OIDC_RESPONSE_TYPE_CODE"],
-          grantTypes: ["OIDC_GRANT_TYPE_AUTHORIZATION_CODE"],
-        } }],
-      })))
-      .mockResolvedValueOnce(new Response("{}"));
+      }, { status: 201 }))
+      .mockResolvedValueOnce(Response.json({
+        details: { totalResult: 1 }, result: [{ id: "dcr-project", name: "ZITADEL DCR" }],
+      }))
+      .mockResolvedValueOnce(Response.json({ pagination: { appliedLimit: "2" } }))
+      .mockResolvedValueOnce(exactApp("eventual-client", "eventual-app"))
+      .mockResolvedValueOnce(Response.json({}));
     global.fetch = fetchMock as typeof fetch;
     await expect(service().register({})).resolves.toMatchObject({ status: 201 });
     expect(fetchMock).toHaveBeenCalledTimes(5);
+    expect(fetchMock.mock.calls[2]?.[0]).toBe(fetchMock.mock.calls[3]?.[0]);
+    const firstLookup = fetchMock.mock.calls[2]?.[1] as RequestInit;
+    const secondLookup = fetchMock.mock.calls[3]?.[1] as RequestInit;
+    expect(firstLookup.body).toEqual(secondLookup.body);
   });
 
   it("does not leak internal URLs or credentials when the upstream connection fails", async () => {
@@ -350,30 +341,11 @@ describe("McpOAuthDcrService", () => {
         ),
       )
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ result: [{ id: "dcr-project", name: "ZITADEL DCR" }] }), {
+        new Response(JSON.stringify({ details: { totalResult: 1 }, result: [{ id: "dcr-project", name: "ZITADEL DCR" }] }), {
           status: 200,
         }),
       )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            result: [
-              {
-                id: "app-1",
-                oidcConfig: {
-                  clientId: "client-1",
-                  responseTypes: ["OIDC_RESPONSE_TYPE_CODE"],
-                  grantTypes: [
-                    "OIDC_GRANT_TYPE_AUTHORIZATION_CODE",
-                    "OIDC_GRANT_TYPE_REFRESH_TOKEN",
-                  ],
-                },
-              },
-            ],
-          }),
-          { status: 200 },
-        ),
-      )
+      .mockResolvedValueOnce(exactApp())
       .mockResolvedValueOnce(new Response("{}", { status: 500 }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
       .mockResolvedValueOnce(new Response(null, { status: 404 }));
@@ -463,10 +435,8 @@ describe("MCP DCR bounded response and deadline (#213)", () => {
   it("provides AbortSignals on the registration and management requests", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ client_id: "c" }), { status: 201 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ result: [{ id: "p", name: "ZITADEL DCR" }] })))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ result: [{ id: "app", oidcConfig: {
-        clientId: "c", responseTypes: ["OIDC_RESPONSE_TYPE_CODE"], grantTypes: ["OIDC_GRANT_TYPE_AUTHORIZATION_CODE"],
-      } }] })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ details: { totalResult: 1 }, result: [{ id: "p", name: "ZITADEL DCR" }] })))
+      .mockResolvedValueOnce(exactApp("c", "app", "p"))
       .mockResolvedValueOnce(new Response("{}"));
     global.fetch = fetchMock as typeof fetch;
     await service().register({});
