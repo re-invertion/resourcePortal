@@ -11,6 +11,8 @@ const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
 const { chromium } = require("playwright");
+const { safeFailureLine } = require("./fail-safe-error.cjs");
+let failureStage = "initialization";
 const issuer = "https://localhost:8443";
 for (const [key,value] of Object.entries({
   GITHUB_ACTIONS: "true", RUNNER_ENVIRONMENT: "github-hosted",
@@ -224,12 +226,14 @@ async function advanceDeviceCodeEntry(page, code) {
   // device consent screen and two separate Allow/Deny buttons.
 }
 (async () => {
+  failureStage = "issuer-discovery";
   const discoveryResponse=await fetch(issuer+"/.well-known/openid-configuration",{
     redirect:"error",signal:deadline(),
   });
   assert.equal(discoveryResponse.status,200);
   const discovery=await discoveryResponse.json();
   assert.equal(discovery.issuer,issuer);
+  failureStage = "synthetic-fixtures";
   const org=await api("GET","/admin/v1/orgs/default");
   const orgId=org.org?.id;
   assert.ok(orgId && /^\d+$/.test(orgId));
@@ -289,11 +293,13 @@ async function advanceDeviceCodeEntry(page, code) {
   const context=await browser.newContext({ignoreHTTPSErrors:true});
   const page=await context.newPage();
   try {
+    failureStage = "login-v2-pkce";
     const sub=await signInBrowser(page,browserClientId,username,password,discovery,callback);
     assert.equal(sub,user.userId,"Login V2 used wrong synthetic subject");
     const cookies=await context.cookies(issuer);
     assert.ok(cookies.length>0,"Successful Login V2 has no issuer browser session");
     console.log("PASS: genuine isolated Login V2 browser/password and signed Native PKCE session");
+    failureStage = "device-no-implicit-consent";
     const request=await deviceRequest(discovery,deviceClientId);
     await assertPending(discovery,deviceClientId,request.device_code);
     await page.goto(request.verification_uri_complete,{
@@ -334,6 +340,7 @@ async function advanceDeviceCodeEntry(page, code) {
     await page.waitForTimeout(6_000);
     await assertPending(discovery,deviceClientId,request.device_code);
     console.log("PASS: signed-in Login V2 Device consent screen visible; NO implicit approval or token on page view");
+    failureStage = "device-explicit-deny";
     await deny.click();
     const rejected=await deviceToken(discovery,deviceClientId,request.device_code);
     assert.equal(rejected.status,400);
@@ -344,6 +351,7 @@ async function advanceDeviceCodeEntry(page, code) {
     // Positive control on a *fresh* device code and this same authenticated
     // browser. Missing Login Client permissions, broken consent UI or broken
     // device token issuance MUST fail the test, not count as safe denial.
+    failureStage = "device-explicit-allow";
     const positive=await deviceRequest(discovery,deviceClientId);
     await assertPending(discovery,deviceClientId,positive.device_code);
     await page.goto(positive.verification_uri_complete,{
@@ -404,7 +412,6 @@ async function advanceDeviceCodeEntry(page, code) {
   }
 })().catch(error=>{
   // Never print passwords, tokens, authorization codes, device codes or URLs.
-  console.error("BLOCKED: real isolated Login V2 consent E2E: "+
-    String(error.message).slice(0,240));
+  console.error(safeFailureLine(failureStage,error));
   process.exitCode=1;
 });
