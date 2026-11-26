@@ -25,6 +25,7 @@ function setup() {
     tenantMembership: {
       create: vi.fn().mockResolvedValue({ ...member, status: MembershipStatus.Active }),
       findFirst: vi.fn().mockResolvedValue(member),
+      findUnique: vi.fn().mockResolvedValue({ roles: [{ roleId: "tenant-owner" }] }),
       update: vi.fn().mockResolvedValue({ ...member, status: MembershipStatus.Active }),
       delete: vi.fn().mockResolvedValue(member),
     },
@@ -135,12 +136,9 @@ function setupSelfMember(owner = false, status = MembershipStatus.Active) {
   f.prisma.tenantMembership.findFirst.mockResolvedValue(owned);
   f.tx.tenantMembership.findFirst.mockResolvedValue(owned);
   f.tx.tenantMembership.update.mockResolvedValue(owned);
-  Object.assign(f.prisma.tenantMembership, {
-    findUnique: vi.fn().mockResolvedValue({
-      status: owned.status,
-      roles: owned.roles.map(({ roleId }) => ({ roleId })),
-    }),
-  });
+  f.tx.tenantMembership.findUnique.mockResolvedValue(
+    status === MembershipStatus.Active ? { roles: owned.roles.map(({ roleId }) => ({ roleId })) } : null,
+  );
   const oauthGrants = {
     updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     upsert: vi.fn().mockResolvedValue({}),
@@ -221,7 +219,7 @@ describe("tenant membership self-management permission boundary", () => {
     const f = setupSelfMember(false, MembershipStatus.Suspended);
     await expect(f.service.updateMembership(tenantId, membershipId,
       { status: MembershipStatus.Active }, f.selfActor))
-      .rejects.toThrow("You cannot grant yourself additional roles");
+      .rejects.toThrow("Current membership.update permission is required");
     expect(f.tx.tenantMembership.update).not.toHaveBeenCalled();
   });
 
@@ -253,6 +251,33 @@ describe("tenant membership self-management permission boundary", () => {
       { status: MembershipStatus.Suspended }, f.selfActor))
       .rejects.toThrow("TenantLastOwner");
     expect(f.tx.tenantMembership.update).not.toHaveBeenCalled();
+    expect(f.tx.auditLogEntry.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("membership mutation reauthorization under tenant lock", () => {
+  it("denies a queued request after actor permissions have been revoked", async () => {
+    const f = setup();
+    f.tx.tenantMembership.findUnique.mockResolvedValue(null);
+    await expect(f.service.updateMembership(tenantId, membershipId,
+      { status: MembershipStatus.Active }, actor))
+      .rejects.toThrow("Current membership.update permission is required");
+    expect(f.tx.$queryRaw.mock.invocationCallOrder[0])
+      .toBeLessThan(f.tx.tenantMembership.findUnique.mock.invocationCallOrder[0]);
+    expect(f.tx.tenantMembership.update).not.toHaveBeenCalled();
+    expect(f.tx.auditLogEntry.create).not.toHaveBeenCalled();
+  });
+
+  it("denies a non-Owner modifying a target promoted to Owner while waiting for the lock", async () => {
+    const f = setupSelfMember();
+    f.tx.tenantMembership.findFirst.mockResolvedValue({
+      ...f.owned, roles: [{ roleId: "tenant-owner", role: { id: "tenant-owner", name: "Owner", permissions: ["*"] } }],
+    });
+    f.tx.tenantMembership.findUnique.mockResolvedValue({ roles: [{ roleId: "tenant-admin" }] });
+    await expect(f.service.updateMembership(tenantId, membershipId,
+      { nativeApplicationKeys: ["web"] }, actor))
+      .rejects.toThrow("Only an active tenant owner can manage Owner roles");
+    expect(f.nativeGrants.upsert).not.toHaveBeenCalled();
     expect(f.tx.auditLogEntry.create).not.toHaveBeenCalled();
   });
 });
