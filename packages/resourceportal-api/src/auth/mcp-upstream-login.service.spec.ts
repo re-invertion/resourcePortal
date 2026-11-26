@@ -134,7 +134,7 @@ function fixture() {
     prisma as unknown as PrismaService, config as unknown as ConfigService,
     oidc as unknown as OidcAuthService, encryption as unknown as EncryptionService,
   );
-  return { svc, prisma, encryption, transport, logins, oidc, reservations, restart };
+  return { svc, prisma, encryption, transport, logins, oidc, reservations, restart, config };
 }
 
 afterEach(() => vi.restoreAllMocks());
@@ -216,6 +216,19 @@ describe("#442 MCP identity-only upstream OAuth PKCE, tenant scope and replay", 
     expect(f.transport).not.toHaveBeenCalled();
     expect(f.prisma.mcpOAuthUpstreamClient.create).not.toHaveBeenCalled();
     expect(f.prisma.mcpOAuthUpstreamLogin.create).not.toHaveBeenCalled();
+  });
+
+  it("does not reserve first-registration on a definitely local invalid TLS route", async () => {
+    const f = fixture();
+    const original = f.config.get.getMockImplementation()!;
+    f.config.get.mockImplementation(key => key === "OIDC_PRIVATE_TLS_ROUTE" ? "invalid" : original(key));
+    await expect(f.svc.start(input, origin)).rejects.toThrow("OIDC private TLS route configuration is invalid");
+    expect(f.prisma.mcpOAuthUpstreamRegistration.createMany).not.toHaveBeenCalled();
+    expect(f.transport).not.toHaveBeenCalled();
+    expect(f.reservations.size).toBe(0);
+    f.config.get.mockImplementation(original);
+    await expect(f.svc.start(input, origin)).resolves.toMatchObject({ url: expect.any(String) });
+    expect(f.reservations.get(tenant)?.status).toBe("Bound");
   });
 
   it("reports an accepted upstream identity client as partial if the RP binding fails", async () => {
