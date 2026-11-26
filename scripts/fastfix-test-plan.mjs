@@ -119,6 +119,18 @@ const commands = {
       "src/auth/oidc-issuer-transport.spec.ts", "src/health/health.controller.spec.ts"],
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/auth.test.tsx"],
   ],
+  // The provider update and real OAuth fixtures are one release security
+  // boundary. The isolated live jobs execute the TS/Compose scenarios; these
+  // targeted commands also validate the DCR audit and browser error redaction.
+  "sso-live": [
+    ["node", "--test", "test/test-sandbox-dcr-audit.test.mjs", "test/tenant-oidc-login-v2/fail-safe-error.test.cjs"],
+    ["node", "--check", "scripts/audit-sandbox-dcr-orphans.mjs"],
+    ["node", "--check", "scripts/run-mcp-resource-oauth-postgres-e2e.cjs"],
+    ["node", "--check", "scripts/tenant-oidc-login-v2-proxy.cjs"],
+    ["node", "--check", "test/tenant-oidc-login-v2/consent-e2e.cjs"],
+    ["node", "--check", "test/tenant-oidc-login-v2/smoke.cjs"],
+    ["bash", "-n", "scripts/run-tenant-oidc-login-v2-e2e.sh"],
+  ],
   "identity": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/identity-providers", "src/tenant-oidc", "src/oauth-applications/redirect-uri.spec.ts", "src/oauth-applications/tenant-oauth-project.spec.ts", "src/auth/github-security-regressions.spec.ts", "src/auth/native-only-login.spec.ts", "src/service-identities", "src/app-consumers"],
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/tenant-identity-sso.test.tsx", "src/pages/tenant-access-pages.test.tsx"],
@@ -259,6 +271,15 @@ const commands = {
 };
 
 const classifiers = [
+  // Explicit paths only: new SSO test surfaces must not evade real provider,
+  // federation, installer or Swarm checks (including on merge_group).
+  [/^packages\/resourceportal-api\/scripts\/tenant-oidc-(?:device-project-grants|device-unapproved|totp)-e2e\.ts$/, ["identity", "security", "workflow", "sso-live"]],
+  [/^scripts\/(?:audit-sandbox-dcr-orphans\.mjs|run-mcp-resource-oauth-postgres-e2e\.cjs)$/, ["identity", "security", "mcp-oauth", "workflow", "sso-live"]],
+  [/^scripts\/(?:run-tenant-oidc-login-v2-e2e\.sh|tenant-oidc-login-v2-proxy\.cjs)$/, ["identity", "security", "workflow", "sso-live"]],
+  [/^test\/federation\/(?:docker-compose\.yml|zitadel-init-steps\.yaml)$/, ["identity", "security", "workflow", "sso-live"]],
+  [/^test\/tenant-oidc-login-v2\/(?:consent-e2e\.cjs|docker-compose\.yml|fail-safe-error(?:\.test)?\.cjs|smoke\.cjs)$/, ["identity", "security", "workflow", "sso-live"]],
+  [/^test\/test-sandbox-dcr-audit\.test\.mjs$/, ["identity", "security", "mcp-oauth", "workflow", "sso-live"]],
+  [/^\.github\/workflows\/tenant-oidc-(?:live|login-v2)\.yml$/, ["identity", "security", "workflow", "sso-live"]],
   // #437 private-issuer connection is a new security boundary. These files
   // must not silently drop out of deterministic patch checks.
   [/^packages\/resourceportal-api\/src\/auth\/oidc-issuer-transport(?:\.spec)?\.ts$/, ["oidc-private-tls", "identity", "security"]],
@@ -653,7 +674,8 @@ export function selectProfiles(paths) {
       profiles.has("networking") ||
       profiles.has("container-terminal") ||
       profiles.has("gpu-security") ||
-      profiles.has("swarm-smoke-fixtures"),
+      profiles.has("swarm-smoke-fixtures") ||
+      profiles.has("sso-live"),
     capacitySmoke: profiles.has("capacity-smoke"),
     gpuSmoke: profiles.has("gpu-security"),
     changedPaths: [...paths],
