@@ -181,7 +181,7 @@ async function startDeviceAuthServer(options = {}) {
           ...(options.discoveryIssuer === null
             ? {} : { issuer: options.discoveryIssuer ?? baseUrl }),
           device_authorization_endpoint: `${baseUrl}/oauth/v2/device_authorization`,
-          token_endpoint: `${baseUrl}/oauth/v2/token`,
+          token_endpoint: options.tokenEndpoint ?? `${baseUrl}/oauth/v2/token`,
           revocation_endpoint: `${baseUrl}/oauth/v2/revoke`,
         });
       }
@@ -196,6 +196,10 @@ async function startDeviceAuthServer(options = {}) {
         });
       }
       if (req.method === "POST" && req.url === "/oauth/v2/token") {
+        if (options.tokenRedirect) {
+          res.writeHead(307, { location: options.tokenRedirect });
+          return res.end();
+        }
         const form = new URLSearchParams(bodyText);
         if (form.get("grant_type") === "refresh_token" && options.refreshResponse) {
           return json(options.refreshResponse.status, options.refreshResponse.body);
@@ -685,6 +689,67 @@ test("legacy unbound stored tokens fail closed on any API endpoint", async () =>
     writeConfig({ token: "legacy-token" });
     await assert.rejects(resolveAuth("https://rp.example/api"), /Stored credentials belong to another API URL/);
   } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("discovery rejects an OAuth token endpoint outside the configured issuer", async () => {
+  const home = withHome();
+  const foreign = await startDeviceAuthServer();
+  const server = await startDeviceAuthServer({ tokenEndpoint: foreign.apiUrl.slice(0, -4) + "/oauth/v2/token" });
+  try {
+    const { interactiveLogin, readConfig } = loadAuth();
+    await assert.rejects(interactiveLogin(server.apiUrl, testRuntime()), /Untrusted OAuth endpoint URL/);
+    assert.deepEqual(readConfig(), {});
+    assert.equal(foreign.requests.length, 0);
+    assert.equal(server.requests.some(r => r.url === "/oauth/v2/device_authorization"), false);
+  } finally {
+    await server.close();
+    await foreign.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("stored refresh and revocation endpoints must remain on the configured issuer", async () => {
+  const home = withHome();
+  const server = await startDeviceAuthServer();
+  const foreign = await startDeviceAuthServer();
+  try {
+    const { writeConfig, resolveAuth, logout, readConfig } = loadAuth();
+    writeConfig({ apiUrl: server.apiUrl, token: "synthetic-expired", auth: {
+      mode: "device", issuer: server.apiUrl.slice(0, -4), clientId: "cli-client",
+      tokenEndpoint: foreign.apiUrl.slice(0, -4) + "/oauth/v2/token",
+      revocationEndpoint: foreign.apiUrl.slice(0, -4) + "/oauth/v2/revoke",
+      expiresAt: "2000-01-01T00:00:00.000Z", refreshToken: "synthetic-refresh",
+    } });
+    await assert.rejects(resolveAuth(server.apiUrl), /Untrusted OAuth endpoint URL/);
+    assert.match((await logout()).warning, /Remote token revocation failed/);
+    assert.deepEqual(readConfig(), {});
+    assert.equal(foreign.requests.length, 0);
+  } finally {
+    await server.close();
+    await foreign.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("credential-bearing refresh rejects redirects before forwarding the request body", async () => {
+  const home = withHome();
+  const foreign = await startDeviceAuthServer();
+  const server = await startDeviceAuthServer({ tokenRedirect: foreign.apiUrl.slice(0, -4) + "/oauth/v2/token" });
+  try {
+    const { writeConfig, resolveAuth } = loadAuth();
+    writeConfig({ apiUrl: server.apiUrl, token: "synthetic-expired", auth: {
+      mode: "device", issuer: server.apiUrl.slice(0, -4), clientId: "cli-client",
+      tokenEndpoint: server.apiUrl.slice(0, -4) + "/oauth/v2/token",
+      expiresAt: "2000-01-01T00:00:00.000Z", refreshToken: "synthetic-refresh",
+    } });
+    await assert.rejects(resolveAuth(server.apiUrl));
+    assert.equal(foreign.requests.length, 0);
+    assert.equal(server.requests.filter(r => r.url === "/oauth/v2/token").length, 1);
+  } finally {
+    await server.close();
+    await foreign.close();
     rmSync(home, { recursive: true, force: true });
   }
 });
