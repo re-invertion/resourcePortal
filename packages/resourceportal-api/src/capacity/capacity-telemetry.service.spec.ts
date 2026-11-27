@@ -98,6 +98,7 @@ function snapshot(
     singleApps: [
       {
         id: appId,
+        name: appId,
         runtimeState: "Running",
         desiredReplicas,
         resources: {
@@ -118,6 +119,7 @@ function appEvidence(
 ) {
   return {
     appId,
+    generation: "test-generation",
     replicas,
     hardLimitBytes: (BigInt(hardGiB) * GiB).toString(),
     predictedBytes: (BigInt(predictedGiB) * GiB).toString(),
@@ -277,7 +279,7 @@ describe("Hybrid admission from worker-published telemetry", () => {
         { ...snapshot(24, "hermes").singleApps[0], runtimeState: "Stopped",
           resources: { cpu: "5", memoryBytes: String(24n * GiB), gpu: 1 } },
       ] } as never,
-      runningApps: [{ appId: "existing-app", hardLimitBytes: 10n * GiB, replicas: 1 }],
+      runningApps: [{ appId: "existing-app", serviceName: "existing-app", reverseStopFirst: true, generation: "test-generation", hardLimitBytes: 10n * GiB, replicas: 1 }],
       inFlightSnapshots: [], schedulableNodeIds: [nodeA],
     });
     expect(result.usable).toBe(age === 0);
@@ -295,15 +297,42 @@ describe("Hybrid admission from worker-published telemetry", () => {
     const candidate = snapshot(2, "wrapper");
     const result = await telemetry.evaluateAdmission({
       snapshot: { ...candidate, singleApps: ["wrapper", "browser"].map(id => ({
-        ...candidate.singleApps[0], id, updatePolicy: { order, parallelism: 1 },
+        ...candidate.singleApps[0], id, name: id, updatePolicy: { order, parallelism: 1 },
       })) } as never,
-      runningApps: ["wrapper", "browser"].map(appId => ({ appId, hardLimitBytes: 2n * GiB, replicas: 1 })),
+      runningApps: ["wrapper", "browser"].map(appId => ({ appId, serviceName: appId, reverseStopFirst: true, generation: "test-generation", hardLimitBytes: 2n * GiB, replicas: 1 })),
       inFlightSnapshots: [], schedulableNodeIds: [nodeA],
     });
     expect(result.usable).toBe(true);
     if (!result.usable) return;
     expect(result.requestedPredictedBytes).toBe(order === "stop-first" ? 0n : 4n * GiB);
     expect(result.decision.allowed).toBe(true);
+  });
+
+  it.each(["rename", "reverse-start-first"] as const)("reserves overlap for %s in candidate and in-flight", async scenario => {
+    const { telemetry } = admissionService([report(nodeA, 24, 1)], [appEvidence()]);
+    const candidate = snapshot(2, "existing-app");
+    if (scenario === "rename") candidate.singleApps[0].name = "renamed";
+    const result = await telemetry.evaluateAdmission({
+      snapshot: candidate as never,
+      runningApps: [{ appId: "existing-app", serviceName: "existing-app", reverseStopFirst: scenario !== "reverse-start-first", generation: "test-generation", hardLimitBytes: 2n * GiB, replicas: 1 }],
+      inFlightSnapshots: [candidate as never], schedulableNodeIds: [nodeA],
+    });
+    expect(result.usable).toBe(true);
+    if (!result.usable) return;
+    expect(result.requestedPredictedBytes).toBe(2n * GiB);
+    expect(result.inFlightPredictedBytes).toBe(2n * GiB);
+  });
+
+  it("retains growth after success while prior-generation evidence is still fresh", async () => {
+    const { telemetry } = admissionService([report(nodeA, 24, 1)], [appEvidence()]);
+    const result = await telemetry.evaluateAdmission({
+      snapshot: snapshot(1) as never,
+      runningApps: [{ appId: "existing-app", serviceName: "existing-app", reverseStopFirst: true, generation: "next-generation", hardLimitBytes: 4n * GiB, replicas: 1 }],
+      inFlightSnapshots: [], schedulableNodeIds: [nodeA],
+    });
+    expect(result.usable).toBe(true);
+    if (!result.usable) return;
+    expect(result.decision.predictedExistingGrowthBytes).toBe(3n * GiB);
   });
 
   it("falls back when the worker-published snapshot is stale", async () => {
@@ -351,6 +380,7 @@ describe("Hybrid admission from worker-published telemetry", () => {
       runningApps: [
         {
           appId: "existing-app",
+          serviceName: "existing-app", reverseStopFirst: true, generation: "test-generation",
           hardLimitBytes: 2n * GiB,
           replicas: 1,
         },
@@ -374,6 +404,7 @@ describe("Hybrid admission from worker-published telemetry", () => {
       runningApps: [
         {
           appId: "existing-app",
+          serviceName: "existing-app", reverseStopFirst: true, generation: "test-generation",
           hardLimitBytes: 12n * GiB,
           replicas: 6,
         },
@@ -399,7 +430,7 @@ describe("Hybrid admission from worker-published telemetry", () => {
           ...app, updatePolicy: { order: "start-first", parallelism: 1 },
         })),
       } as never,
-      runningApps: [{ appId: "existing-app", hardLimitBytes: 2n * GiB, replicas: 1 }],
+      runningApps: [{ appId: "existing-app", serviceName: "existing-app", reverseStopFirst: true, generation: "test-generation", hardLimitBytes: 2n * GiB, replicas: 1 }],
       inFlightSnapshots: [],
       schedulableNodeIds: [nodeA],
     });
@@ -422,7 +453,7 @@ describe("Hybrid admission from worker-published telemetry", () => {
         })),
       } as never,
       runtimeStart: true,
-      runningApps: [{ appId: "existing-app", hardLimitBytes: 2n * GiB, replicas: 1 }],
+      runningApps: [{ appId: "existing-app", serviceName: "existing-app", reverseStopFirst: true, generation: "test-generation", hardLimitBytes: 2n * GiB, replicas: 1 }],
       inFlightSnapshots: [],
       schedulableNodeIds: [nodeA],
     });
@@ -441,6 +472,7 @@ describe("Hybrid admission from worker-published telemetry", () => {
       runningApps: [
         {
           appId: "existing-app",
+          serviceName: "existing-app", reverseStopFirst: true, generation: "test-generation",
           hardLimitBytes: 2n * GiB,
           replicas: 1,
         },
@@ -727,6 +759,7 @@ describe("worker collection completeness", () => {
       runningApps: [
         {
           appId: "existing-app",
+          serviceName: "existing-app", reverseStopFirst: true, generation: "test-generation",
           hardLimitBytes: 4n * GiB,
           replicas: 2,
         },
