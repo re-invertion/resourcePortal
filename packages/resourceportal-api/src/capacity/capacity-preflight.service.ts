@@ -142,12 +142,14 @@ export class CapacityPreflightService {
       select: { stackConfig: true },
     });
     let peakDemand = candidateDemand;
+    let rollbackSnapshot: CapacityDeploymentSnapshot | undefined;
     if (previous) {
       const deployed = this.parseSnapshot(previous.stackConfig);
       if (!deployed || deployed.appGroup.id !== snapshot.appGroup.id ||
           deployed.appGroup.tenantId !== snapshot.appGroup.tenantId) {
         return this.platformUnavailable("Cannot account preceding deployment capacity");
       }
+      rollbackSnapshot = deployed;
       const live = await this.succeededRuntimeDemand(tx, deployed);
       const restored = snapshotDemand(deployed);
       const old = { cpuNano: live.cpuNano > restored.cpuNano ? live.cpuNano : restored.cpuNano, memoryBytes: live.memoryBytes > restored.memoryBytes ? live.memoryBytes : restored.memoryBytes };
@@ -160,6 +162,8 @@ export class CapacityPreflightService {
       occupiedResult.occupied,
       peakDemand,
       platformResult.schedulableNodeIds,
+      false,
+      rollbackSnapshot,
     );
   }
 
@@ -305,6 +309,7 @@ export class CapacityPreflightService {
     demand: CapacityDemand,
     schedulableNodeIds: string[],
     runtimeStart = false,
+    rollbackSnapshot?: CapacityDeploymentSnapshot,
   ): Promise<CapacityAdmissionResult> {
     const fit = projectedCapacityFits(supply, occupied, demand);
 
@@ -331,6 +336,7 @@ export class CapacityPreflightService {
         inFlightSnapshots,
         schedulableNodeIds,
         runtimeStart,
+        rollbackSnapshot,
       });
       if (hybrid.usable) {
         if (hybrid.decision.allowed) {
