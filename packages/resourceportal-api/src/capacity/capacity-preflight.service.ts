@@ -93,6 +93,7 @@ export class CapacityPreflightService {
       this.currentRunningApps(tx),
       this.inFlightSnapshots(tx),
     ]);
+    if (!inFlightSnapshots) return null;
     const result = await this.telemetry.evaluateAdmission({
       snapshot: { appGroup: { id: "", tenantId: "", runtimeState: "Stopped" }, singleApps: [] },
       runningApps,
@@ -301,6 +302,7 @@ export class CapacityPreflightService {
         this.currentRunningApps(tx),
         this.inFlightSnapshots(tx, snapshot.appGroup.id),
       ]);
+      if (!inFlightSnapshots) return this.platformUnavailable("Cannot account active deployment capacity");
       const hybrid = await this.telemetry.evaluateAdmission({
         snapshot,
         runningApps,
@@ -538,7 +540,7 @@ export class CapacityPreflightService {
   private async inFlightSnapshots(
     tx: Prisma.TransactionClient,
     excludedAppGroupId?: string,
-  ): Promise<CapacityDeploymentSnapshot[]> {
+  ): Promise<CapacityDeploymentSnapshot[] | null> {
     const rows = await tx.appGroupDeployment.findMany({
       where: {
         ...(excludedAppGroupId ? { appGroupId: { not: excludedAppGroupId } } : {}),
@@ -547,9 +549,9 @@ export class CapacityPreflightService {
       },
       select: { stackConfig: true },
     });
-    return rows
-      .map((row) => this.parseSnapshot(row.stackConfig))
-      .filter((row): row is CapacityDeploymentSnapshot => row !== null);
+    const snapshots = rows.map((row) => this.parseSnapshot(row.stackConfig));
+    if (snapshots.some(row => row === null)) return null;
+    return snapshots.filter((row): row is CapacityDeploymentSnapshot => row !== null);
   }
 
   private async platformCapacity(tx: Prisma.TransactionClient) {
