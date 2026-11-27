@@ -352,6 +352,23 @@ describe("Hybrid admission from worker-published telemetry", () => {
     expect(result.decision.inFlightPredictedBytes).toBe(4n * GiB);
   });
 
+  it.each(["removed", "stopped"])("retains the rollback hard-limit gap for a %s live workload", async state => {
+    const { telemetry } = admissionService([report(nodeA, 24, 1)], [appEvidence("existing-app", 1, 4, 1)]);
+    const previous = snapshot(4, "existing-app");
+    const target = { ...previous, singleApps: state === "removed" ? [] : [{ ...previous.singleApps[0], runtimeState: "Stopped" }] };
+    const result = await telemetry.evaluateAdmission({
+      snapshot: target as never,
+      rollbackSnapshot: previous as never,
+      runningApps: [{ appId: "existing-app", serviceName: "existing-app", reverseStopFirst: true, generation: "test-generation", hardLimitBytes: 4n * GiB, replicas: 1 }],
+      inFlightSnapshots: [{ ...target, rollbackSnapshot: previous } as never],
+      schedulableNodeIds: [nodeA],
+    });
+    expect(result.usable).toBe(true);
+    if (!result.usable) return;
+    expect(result.requestedPredictedBytes).toBe(3n * GiB);
+    expect(result.decision.inFlightPredictedBytes).toBe(3n * GiB);
+  });
+
   it("falls back when the worker-published snapshot is stale", async () => {
     const { telemetry } = admissionService(
       [report(nodeA, 20, 5)],
