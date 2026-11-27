@@ -664,6 +664,20 @@ describe("Stage 15 capacity preflight", () => {
       }]);
     }
 
+    it("rejects unreadable in-flight reservations before evaluating Hybrid capacity", async () => {
+      platform();
+      findDeployments.mockResolvedValueOnce([]).mockResolvedValueOnce([{ stackConfig: "invalid JSON" }]);
+      const evaluateAdmission = vi.fn();
+      service = new CapacityPreflightService(
+        { evaluateAdmission } as never,
+        { current: () => ({ mode: "Hybrid" }) } as never,
+      );
+      await expect(service.admitDeployment(tx, deploymentSnapshot())).resolves.toMatchObject({
+        success: false, errorCode: "PlatformUnavailable",
+      });
+      expect(evaluateAdmission).not.toHaveBeenCalled();
+    });
+
     it("reports telemetry unavailable/stale reason without bypassing strict reservation limits", async () => {
       nearLimitReservation();
       const evaluateAdmission = vi.fn().mockResolvedValue({
