@@ -323,16 +323,16 @@ describe("Hybrid admission from worker-published telemetry", () => {
     expect(result.decision.inFlightPredictedBytes).toBe(3n * GiB);
   });
 
-  it("retains growth after success while prior-generation evidence is still fresh", async () => {
+  it.each([2, 4])("retains growth after success with prior-generation evidence and %s GiB limit", async hardGiB => {
     const { telemetry } = admissionService([report(nodeA, 24, 1)], [appEvidence()]);
     const result = await telemetry.evaluateAdmission({
       snapshot: snapshot(1) as never,
-      runningApps: [{ appId: "existing-app", serviceName: "existing-app", reverseStopFirst: true, generation: "next-generation", hardLimitBytes: 4n * GiB, replicas: 1 }],
+      runningApps: [{ appId: "existing-app", serviceName: "existing-app", reverseStopFirst: true, generation: "next-generation", hardLimitBytes: BigInt(hardGiB) * GiB, replicas: 1 }],
       inFlightSnapshots: [], schedulableNodeIds: [nodeA],
     });
     expect(result.usable).toBe(true);
     if (!result.usable) return;
-    expect(result.decision.predictedExistingGrowthBytes).toBe(3n * GiB);
+    expect(result.decision.predictedExistingGrowthBytes).toBe(BigInt(hardGiB - 1) * GiB);
   });
 
   it("falls back when the worker-published snapshot is stale", async () => {
@@ -791,7 +791,7 @@ describe("capacity policy validation", () => {
 });
 
 describe("worker admission evidence publication", () => {
-  it("publishes deployed hard limits despite a smaller draft, with JSON-safe per-node and per-app evidence", async () => {
+  it.each([false, true])("publishes deployed limits only after generation completion (pre-success=%s)", async preSuccess => {
     const store = new MemoryStore();
     const now = new Date().toISOString();
     store.points.push(
@@ -844,7 +844,7 @@ describe("worker admission evidence publication", () => {
         findMany: (query: { where: { status: string } }) => Promise.resolve(query.where.status === "Succeeded" ? [{
           appGroupId: "group-deployed",
           version: 1,
-          completedAt: new Date(Date.parse(now) - 60_000),
+          completedAt: new Date(Date.parse(now) + (preSuccess ? 1000 : -60_000)),
           stackConfig: JSON.stringify({ appGroup: { id: "group-deployed" }, singleApps: [{ id: "existing-app", resources: { memoryBytes: (2n * GiB).toString() } }] }),
         }] : []),
       },
@@ -874,7 +874,7 @@ describe("worker admission evidence publication", () => {
           memoryTotalBytes: (32n * GiB).toString(),
         },
       ],
-      apps: [
+      apps: preSuccess ? [] : [
         {
           appId: "existing-app",
           replicas: 1,
