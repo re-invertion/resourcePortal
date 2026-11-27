@@ -265,6 +265,47 @@ describe("Hybrid admission from worker-published telemetry", () => {
     expect(result.reason).toContain("does not cover every schedulable");
   });
 
+  it.each([0, 120_000])("evaluates stopped GPU assignment without charging stopped replicas (#533, age=%s)", async age => {
+    const { telemetry } = admissionService(
+      [{ ...report(nodeA, 44, 5), memoryTotalBytes: "67417341952" }],
+      [appEvidence("existing-app", 1, 10, 5)], age,
+    );
+    const candidate = snapshot(10, "existing-app");
+    const result = await telemetry.evaluateAdmission({
+      snapshot: { ...candidate, singleApps: [
+        { ...candidate.singleApps[0], updatePolicy: { order: "stop-first" } },
+        { ...snapshot(24, "hermes").singleApps[0], runtimeState: "Stopped",
+          resources: { cpu: "5", memoryBytes: String(24n * GiB), gpu: 1 } },
+      ] } as never,
+      runningApps: [{ appId: "existing-app", hardLimitBytes: 10n * GiB, replicas: 1 }],
+      inFlightSnapshots: [], schedulableNodeIds: [nodeA],
+    });
+    expect(result.usable).toBe(age === 0);
+    if (result.usable) {
+      expect(result.requestedPredictedBytes).toBe(0n);
+      expect(result.decision.allowed).toBe(true);
+    } else expect(result.reason).toContain("fresh worker-published");
+  });
+
+  it.each(["stop-first", "start-first"] as const)("accounts two existing 2 GiB services in an image rollout (#534, %s)", async order => {
+    const { telemetry } = admissionService(
+      [{ ...report(nodeA, 44, 2), memoryTotalBytes: "67417341952" }],
+      [appEvidence("wrapper", 1, 2, 1), appEvidence("browser", 1, 2, 1)],
+    );
+    const candidate = snapshot(2, "wrapper");
+    const result = await telemetry.evaluateAdmission({
+      snapshot: { ...candidate, singleApps: ["wrapper", "browser"].map(id => ({
+        ...candidate.singleApps[0], id, updatePolicy: { order, parallelism: 1 },
+      })) } as never,
+      runningApps: ["wrapper", "browser"].map(appId => ({ appId, hardLimitBytes: 2n * GiB, replicas: 1 })),
+      inFlightSnapshots: [], schedulableNodeIds: [nodeA],
+    });
+    expect(result.usable).toBe(true);
+    if (!result.usable) return;
+    expect(result.requestedPredictedBytes).toBe(order === "stop-first" ? 0n : 4n * GiB);
+    expect(result.decision.allowed).toBe(true);
+  });
+
   it("falls back when the worker-published snapshot is stale", async () => {
     const { telemetry } = admissionService(
       [report(nodeA, 20, 5)],
