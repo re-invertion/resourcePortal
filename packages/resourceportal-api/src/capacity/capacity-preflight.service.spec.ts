@@ -251,6 +251,17 @@ describe("Stage 15 capacity preflight", () => {
     await expect(service.admitDeployment(tx, deploymentSnapshot({ cpu: "1", memoryBytes: "1024" }))).resolves.toMatchObject({ success: false, errorCode: "InsufficientCapacity" });
   });
 
+  it.each([DeploymentPhase.ApplyingStack, DeploymentPhase.WaitingForRollout, DeploymentPhase.Validating])("retains failed deployment reservations only after possible application (%s)", async phase => {
+    platform({ cpuNano: 20_000_000_000n, memoryBytes: 3_072n });
+    const id = "other-group";
+    findDeployments.mockResolvedValue([{
+      appGroupId: id, version: 1, status: DeploymentStatus.Failed, phase,
+      stackConfig: serializedSnapshot(deploymentSnapshot({ id, cpu: "1", memoryBytes: "2048" })),
+    }]);
+    const result = await service.admitDeployment(tx, deploymentSnapshot({ cpu: "1", memoryBytes: "2048" }));
+    expect(result.success).toBe(phase === DeploymentPhase.Validating);
+  });
+
   it("retains all unresolved failed rollback versions until a newer success", async () => {
     platform({ cpuNano: 20_000_000_000n, memoryBytes: 7_168n });
     const id = "other-group";
