@@ -928,7 +928,17 @@ export class CapacityTelemetryService {
             targetHard,
           )
         : targetHard;
-      if (target > baseline) increment += target - baseline;
+      const growth = target > baseline ? target - baseline : 0n;
+      // Explicit start-first may overlap old and new tasks. Reserve the
+      // incoming batch at the hard limit, in addition to steady-state growth.
+      // Runtime-start snapshots are handled separately by the caller.
+      const parallelism = app.updatePolicy?.parallelism;
+      const overlap = app.updatePolicy?.order === "start-first"
+        ? Math.min(current.replicas, targetReplicas,
+            typeof parallelism === "number" && Number.isSafeInteger(parallelism) && parallelism > 0
+              ? parallelism : targetReplicas)
+        : 0;
+      increment += growth + BigInt(overlap) * BigInt(app.resources.memoryBytes);
     }
     return increment;
   }
