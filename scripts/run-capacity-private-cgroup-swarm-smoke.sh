@@ -20,7 +20,7 @@ fi
 service="rp-capacity-cgroup-${GITHUB_RUN_ID:-local}-${BASHPID}"
 app_id='11111111-2222-4333-8444-555555555555'
 cleanup() {
-  docker service rm "$service" >/dev/null 2>&1 || true
+  docker service rm "$service" "${service}-renamed" >/dev/null 2>&1 || true
   for _ in $(seq 1 30); do
     if ! docker service inspect "$service" >/dev/null 2>&1; then break; fi
     sleep 1
@@ -166,3 +166,26 @@ async function run() {
 }
 run().catch(err => { console.error(err); process.exitCode = 1; });
 NODE
+
+# SEC-01/02: real Swarm identity and reverse policy contracts. Creating a
+# differently named service is independent of the old service's update order.
+docker service create --detach=true --name "${service}-renamed" --replicas 1 \
+  --limit-memory 32M --update-order stop-first alpine:3.20 sleep 300 >/dev/null
+for _ in $(seq 1 90); do
+  [[ "$(docker service ls --filter "name=${service}-renamed" --format '{{.Replicas}}')" == '1/1' ]] && break
+  sleep 1
+done
+[[ "$(docker service ls --filter "name=${service}-renamed" --format '{{.Replicas}}')" == '1/1' ]]
+[[ "$(docker service inspect "$service" --format '{{.ID}}')" != "$(docker service inspect "${service}-renamed" --format '{{.ID}}')" ]]
+[[ "$(docker service ls --filter "id=$(docker service inspect "$service" --format '{{.ID}}')" --format '{{.Replicas}}')" == '2/2' ]]
+echo 'PASS: different Swarm service identity can coexist with previous running service despite stop-first'
+
+# The previous artifact can specify start-first while the forward artifact
+# specifies stop-first. Reapply both policies on a disposable real service.
+docker service update --detach=false --update-order start-first --limit-memory 64M "${service}-renamed" >/dev/null
+[[ "$(docker service inspect "${service}-renamed" --format '{{.Spec.UpdateConfig.Order}} {{.Spec.TaskTemplate.Resources.Limits.MemoryBytes}}')" == 'start-first 67108864' ]]
+docker service update --detach=false --update-order stop-first --limit-memory 32M "${service}-renamed" >/dev/null
+[[ "$(docker service inspect "${service}-renamed" --format '{{.Spec.UpdateConfig.Order}} {{.Spec.TaskTemplate.Resources.Limits.MemoryBytes}}')" == 'stop-first 33554432' ]]
+docker service update --detach=false --update-order start-first --limit-memory 64M "${service}-renamed" >/dev/null
+[[ "$(docker service inspect "${service}-renamed" --format '{{.Spec.UpdateConfig.Order}} {{.Spec.TaskTemplate.Resources.Limits.MemoryBytes}}')" == 'start-first 67108864' ]]
+echo 'PASS: reapplying previous real Swarm artifact restores start-first and larger memory limit'
