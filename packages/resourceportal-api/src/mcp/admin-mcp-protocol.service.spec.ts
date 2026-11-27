@@ -107,6 +107,48 @@ describe("AdminMcpProtocolService", () => {
     vi.unstubAllGlobals();
   });
 
+  it("publishes exactly one OpenAI-compatible connection profile without breaking the legacy profile", async () => {
+    const { service } = fixture();
+    const connection = await connectClient({
+      service,
+      request: mcpRequest({ authorization: "Bearer profile-test-token" }),
+      authenticated: true,
+    });
+    try {
+      const { tools } = await connection.client.listTools();
+      const profiles = tools.filter((tool) => tool._meta?.["openai/profile"] === true);
+      expect(profiles.map((tool) => tool.name)).toEqual(["resourceportal_admin_connection_profile"]);
+      expect(profiles[0].outputSchema).toMatchObject({
+        type: "object",
+        additionalProperties: false,
+        required: ["id"],
+        properties: {
+          id: { type: "string", minLength: 1, pattern: "\\S" },
+          name: { type: "string" },
+          email: { type: "string" },
+        },
+      });
+      expect(profiles[0].annotations?.readOnlyHint).toBe(true);
+      const response = await connection.client.callTool({ name: "resourceportal_admin_connection_profile", arguments: {} });
+      expect(response.isError).not.toBe(true);
+      expect(response.structuredContent).toEqual({
+        id: actor.id,
+        name: actor.displayName,
+        email: actor.email,
+      });
+      expect(response.content).toEqual([{ type: "text", text: JSON.stringify(response.structuredContent, null, 2) }]);
+      const again = await connection.client.callTool({ name: "resourceportal_admin_connection_profile", arguments: {} });
+      expect(again.structuredContent).toEqual(response.structuredContent);
+      const legacy = await connection.client.callTool({ name: "resourceportal_admin_profile", arguments: {} });
+      expect(legacy.structuredContent).toMatchObject({
+        user: { id: actor.id, email: actor.email, displayName: actor.displayName },
+        scope: "platform", platformAdmin: true,
+      });
+    } finally {
+      await connection.close();
+    }
+  });
+
   it("exposes a dedicated explicit Platform Admin tool catalog with no generic passthrough", async () => {
     const { service } = fixture();
     const connection = await connectClient({
@@ -190,7 +232,7 @@ describe("AdminMcpProtocolService", () => {
 
     try {
       const result = await connection.client.callTool({
-        name: "resourceportal_admin_profile",
+        name: "resourceportal_admin_connection_profile",
         arguments: {},
       });
 
@@ -443,6 +485,12 @@ describe("AdminMcpProtocolService", () => {
     });
 
     try {
+      const profile = await connection.client.callTool({
+        name: "resourceportal_admin_connection_profile",
+        arguments: {},
+      });
+      expect(profile.isError).toBe(true);
+      expect(profile.structuredContent).not.toHaveProperty("id");
       const result = await connection.client.callTool({
         name: "resourceportal_admin_list_users",
         arguments: {},
