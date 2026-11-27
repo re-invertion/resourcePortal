@@ -319,6 +319,33 @@ describe("#399 capacity sample evidence never impersonates a measured zero", () 
     }));
   }
 
+  it("distinguishes pre-growth headroom from deployable Hybrid budget (#500)", async () => {
+    installCapacityApi({
+      predictions: [], observations: "12", telemetryFresh: true,
+      nodes: [{ nodeId: "node-a", nodeMemoryAvailableBytes: "42949672960", nodeMemoryTotalBytes: "68719476736" }],
+      minimumNodeHeadroomBytes: "34359738368",
+      hybridBudget: { deployableHeadroomBytes: "16106127360", predictedExistingGrowthBytes: "17179869184", inFlightPredictedBytes: "1073741824" },
+    });
+    render(<PlatformInfrastructurePage section="capacity" />);
+    const summary = screen.getByRole("region", {name:"Capacity prediction summary"});
+    expect(await within(summary).findByText("15 GiB")).toBeTruthy();
+    expect(within(summary).getByText("32 GiB")).toBeTruthy();
+    expect(within(summary).getByText("Hybrid deployable budget")).toBeTruthy();
+    expect(within(summary).getByText("Pre-growth headroom")).toBeTruthy();
+    expect(screen.getByText("Fresh published snapshot")).toBeTruthy();
+  });
+
+  it("does not present stale telemetry as a deployable Hybrid budget (#500)", async () => {
+    installCapacityApi({
+      predictions: [], observations: "12", telemetryFresh: false,
+      nodes: [{ nodeId: "node-a", nodeMemoryAvailableBytes: "42949672960", nodeMemoryTotalBytes: "68719476736" }],
+      minimumNodeHeadroomBytes: "34359738368", hybridBudget: null,
+    });
+    render(<PlatformInfrastructurePage section="capacity" />);
+    expect(await screen.findByText("Unavailable or stale — Hybrid may fall back to Strict")).toBeTruthy();
+    expect(screen.getByText("No usable Hybrid admission decision; Strict or fallback rules apply")).toBeTruthy();
+  });
+
   it("shows unavailable prediction and headroom without app samples or node telemetry", async () => {
     installCapacityApi({predictions:[],nodes:[],observations:"0",predictedDemandBytes:"0",minimumNodeHeadroomBytes:"0",nodePredictedP99Bytes:"0"});
     render(<PlatformInfrastructurePage section="capacity" />);

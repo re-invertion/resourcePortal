@@ -139,8 +139,10 @@ describe("StackRolloutService healthcheck stability gate", () => {
   afterEach(() => vi.useRealTimers());
 
   it("requires three consecutive matching polls when explicitly requested", async () => {
-    spawnMock.mockImplementation(() =>
-      dockerProcess('{"Name":"rp_test_web","Replicas":"1/1"}\n'),
+    spawnMock.mockImplementation((_command: string, args: string[]) =>
+      dockerProcess(args.includes("ls") ? "abcdefghijklmnopqrstuvwxy|Ready" :
+        args.includes("ps") ? "rp_test_web.1|Running|Running 1 second ago" :
+        '{"Name":"rp_test_web","Replicas":"1/1"}\n'),
     );
     const config = {
       get: (key: string, fallback?: unknown) =>
@@ -157,5 +159,32 @@ describe("StackRolloutService healthcheck stability gate", () => {
     const result = await resultPromise;
     expect(result.success).toBe(true);
     expect(spawnMock.mock.calls.length).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe("StackRolloutService capacity task census", () => {
+  beforeEach(() => {
+    spawnMock.mockReset();
+    vi.useFakeTimers();
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it.each([
+    ["old renamed task", "abcdefghijklmnopqrstuvwxy|Ready", "rp_test_old.1|Shutdown|Running 1 second ago", false],
+    ["old same-name task", "abcdefghijklmnopqrstuvwxy|Ready", "rp_test_web.1.old|Shutdown|Running 1 second ago", false],
+    ["unreachable node", "abcdefghijklmnopqrstuvwxy|Down", "", false],
+    ["finished old task", "abcdefghijklmnopqrstuvwxy|Ready", "rp_test_old.1|Shutdown|Shutdown 1 second ago", true],
+  ])("holds capacity for %s until the actual census is safe", async (_scenario, nodes, oldTask, allowed) => {
+    spawnMock.mockImplementation((_command: string, args: string[]) =>
+      dockerProcess(args.includes("ls") ? String(nodes) :
+        args.includes("ps") ? "rp_test_web.1|Running|Running 1 second ago\n" + String(oldTask) :
+        '{"Name":"rp_test_web","Replicas":"1/1"}'),
+    );
+    const service = new StackRolloutService({
+      get: (key: string) => key === "DOCKER_ROLLOUT_TIMEOUT_MS" ? 20 : key === "DOCKER_ROLLOUT_POLL_INTERVAL_MS" ? 5 : undefined,
+    } as unknown as ConfigService);
+    const promise = service.waitForRollout({ stackName: "rp_test", expectedServices: [{ name: "rp_test_web", desiredReplicas: 1 }] });
+    await vi.advanceTimersByTimeAsync(60);
+    expect((await promise).success).toBe(allowed);
   });
 });

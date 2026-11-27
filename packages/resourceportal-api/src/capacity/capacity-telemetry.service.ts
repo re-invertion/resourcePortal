@@ -25,10 +25,14 @@ type RunningAppCapacity = {
   appId: string;
   hardLimitBytes: bigint;
   replicas: number;
+  serviceName?: string;
+  reverseStopFirst?: boolean;
+  generation?: string;
 };
 
 type AdmissionAppEvidence = {
   appId: string;
+  generation?: string;
   replicas: number;
   hardLimitBytes: bigint;
   predictedBytes: bigint;
@@ -74,7 +78,7 @@ export type HybridAdmissionEvaluation =
 
 /** Counts only: tenant identities must not leak via capacity/admission diagnostics. */
 class IncompleteReplicaTelemetryError extends Error {
-  constructor(readonly missingReplicaCount: number) {
+  constructor(readonly missingReplicaCount: number, readonly unexpectedReplicaCount = 0) {
     super("application replica telemetry does not match observed runtime replicas");
     this.name = "IncompleteReplicaTelemetryError";
   }
@@ -169,9 +173,10 @@ export class CapacityTelemetryService {
       this.schedulableNodeIds(),
       this.prisma.singleApp.findMany({
         where: {
-          runtimeState: "Running",
-          pendingDeletion: false,
-          appGroup: { runtimeState: "Running" },
+          OR: [
+            { runtimeState: "Running", pendingDeletion: false, appGroup: { runtimeState: "Running" } },
+            { actualReplicas: { gt: 0 } },
+          ],
         },
         select: { id: true, actualReplicas: true },
       }),
@@ -179,12 +184,15 @@ export class CapacityTelemetryService {
     const reportByNodeId = new Map(
       reports.map((report) => [report.swarmNodeId, report] as const),
     );
+    if (reportByNodeId.size !== reports.length) {
+      throw new Error("authenticated Swarm capacity telemetry contains duplicate node reports");
+    }
     const missingNodeIds = schedulableNodeIds.filter(
       (nodeId) => !reportByNodeId.has(nodeId),
     );
     if (missingNodeIds.length > 0) {
       throw new Error(
-        "authenticated Swarm capacity telemetry does not cover every schedulable node",
+        "authenticated Swarm capacity telemetry does not cover every schedulable node (" + missingNodeIds.length + " missing of " + schedulableNodeIds.length + " expected)",
       );
     }
     const coveredReports = schedulableNodeIds.map(
@@ -216,9 +224,10 @@ export class CapacityTelemetryService {
       }
       observedContainerIds.add(container.id);
       if (!expectedReplicaCounts.has(container.appId)) {
-        throw new Error(
-          "application replica telemetry does not match observed runtime replicas",
-        );
+        // A task can start between the runtime reconciliation and the node
+        // census. Reject this sample, but permit the same bounded full retry
+        // as a missing replica. Never accept an unknown application sample.
+        throw new IncompleteReplicaTelemetryError(0, 1);
       }
       observedReplicaCounts.set(
         container.appId,
@@ -235,7 +244,7 @@ export class CapacityTelemetryService {
     if (missingReplicaCount > 0 || unexpectedReplicaCount > 0) {
       // Missing samples can be caused by legacy task labels or another probe
       // coverage issue; do not claim migration is certainly required.
-      throw new IncompleteReplicaTelemetryError(missingReplicaCount);
+      throw new IncompleteReplicaTelemetryError(missingReplicaCount, unexpectedReplicaCount);
     }
 
     const byApp = new Map<string, typeof containers>();
@@ -324,6 +333,12 @@ export class CapacityTelemetryService {
       });
     }
 
+    // Collection time is part of evidence age, not a fresh timestamp
+    // assigned after a slow probe. Do not publish an already expired census.
+    const ageMs = Date.now() - Date.parse(observedAt);
+    if (ageMs < 0 || ageMs >= this.policy().maxTelemetryAgeSeconds * 1000) {
+      throw new Error("Swarm capacity telemetry expired during collection");
+    }
     await this.store.append(points, this.policy());
     return points;
   }
@@ -333,6 +348,8 @@ export class CapacityTelemetryService {
     runningApps: RunningAppCapacity[];
     inFlightSnapshots: CapacityDeploymentSnapshot[];
     schedulableNodeIds: string[];
+    runtimeStart?: boolean;
+    rollbackSnapshot?: CapacityDeploymentSnapshot;
   }): Promise<HybridAdmissionEvaluation> {
     await this.restorePolicy();
     const policy = this.policy();
@@ -400,7 +417,11 @@ export class CapacityTelemetryService {
     let recentOomEvents = 0n;
 
     for (const running of input.runningApps) {
-      const observed = evidenceByApp.get(running.appId);
+      const candidate = evidenceByApp.get(running.appId);
+      const observed = candidate && running.generation !== undefined &&
+        candidate.generation === running.generation && candidate.hardLimitBytes * BigInt(running.replicas) ===
+        running.hardLimitBytes * BigInt(candidate.replicas) ? candidate : undefined;
+      if (!observed) evidenceByApp.delete(running.appId);
       const predictedBytes = observed
         ? this.scalePrediction(
             observed.predictedBytes,
@@ -430,21 +451,38 @@ export class CapacityTelemetryService {
         ? 0
         : Math.min(...predictions.map((item) => item.confidence));
 
-    const requestedPredictedBytes = this.incrementalPrediction(
+    let requestedPredictedBytes = this.incrementalPrediction(
       input.snapshot,
       currentByApp,
       evidenceByApp,
       currentPredictionByApp,
+      input.runtimeStart,
     );
+    // A previous artifact may restore stopped or removed services. Its
+    // declared demand is not necessarily represented by the running baseline.
+    const restorationDemand = (target: CapacityDeploymentSnapshot, rollback?: CapacityDeploymentSnapshot) => {
+      let missing = 0n;
+      if (rollback?.appGroup.runtimeState === "Running") {
+        for (const app of rollback.singleApps) {
+          if (app.runtimeState !== "Running" || app.desiredReplicas <= 0) continue;
+          const restored = BigInt(app.resources.memoryBytes) * BigInt(app.desiredReplicas);
+          const live = app.id ? currentByApp.get(app.id) : undefined;
+          const retained = target.appGroup.runtimeState === "Running" && target.singleApps.some(next =>
+            next.id === app.id && next.runtimeState === "Running" && next.desiredReplicas > 0);
+          const baseline = live && app.id
+            ? (retained ? live.hardLimitBytes : currentPredictionByApp.get(app.id) ?? live.hardLimitBytes)
+            : 0n;
+          if (restored > baseline) missing += restored - baseline;
+        }
+      }
+      return missing;
+    };
+    requestedPredictedBytes += restorationDemand(input.snapshot, input.rollbackSnapshot);
     const inFlightPredictedBytes = input.inFlightSnapshots.reduce(
       (sum, snapshot) =>
         sum +
-        this.incrementalPrediction(
-          snapshot,
-          currentByApp,
-          evidenceByApp,
-          currentPredictionByApp,
-        ),
+        this.incrementalPrediction(snapshot, currentByApp, evidenceByApp, currentPredictionByApp) +
+        restorationDemand(snapshot, snapshot.rollbackSnapshot),
       0n,
     );
 
@@ -475,8 +513,8 @@ export class CapacityTelemetryService {
 
     const denied = decisions.find((item) => !item.allowed);
     const mostConstrained = [...decisions].sort((a, b) => {
-      const aHeadroom = a.remainingAfterAdmissionBytes - a.safetyReserveBytes;
-      const bHeadroom = b.remainingAfterAdmissionBytes - b.safetyReserveBytes;
+      const aHeadroom = a.deployableHeadroomBytes ?? 0n;
+      const bHeadroom = b.deployableHeadroomBytes ?? 0n;
       return aHeadroom < bHeadroom ? -1 : aHeadroom > bHeadroom ? 1 : 0;
     })[0];
     const selected = denied ?? mostConstrained;
@@ -522,9 +560,20 @@ export class CapacityTelemetryService {
       !Array.isArray(state.lastResult)
         ? (state.lastResult as Record<string, unknown>)
         : {};
+    // Published diagnostic values are historical, not permission to deploy.
+    const policy = this.policy();
+    const evidence = this.parseAdmissionEvidence(result.admissionEvidence);
+    const age = state?.lastSuccessAt ? Date.now() - state.lastSuccessAt.getTime() : Infinity;
+    const fresh = age >= 0 && age <= policy.maxTelemetryAgeSeconds * 1000 &&
+      evidence !== null && evidence.nodes.length > 0 &&
+      evidence.nodes.every(node => {
+        const nodeAge = Date.now() - Date.parse(node.observedAt);
+        return nodeAge >= 0 && nodeAge <= policy.maxTelemetryAgeSeconds * 1000;
+      });
     return {
       ...result,
-      policy: this.policyService.serialize(this.policy()),
+      telemetryFresh: fresh,
+      policy: this.policyService.serialize(policy),
       telemetryState: state
         ? {
             lastCompletedAt: state.lastCompletedAt,
@@ -589,9 +638,10 @@ export class CapacityTelemetryService {
       await Promise.all([
         this.prisma.singleApp.findMany({
           where: {
-            runtimeState: "Running",
-            pendingDeletion: false,
-            appGroup: { runtimeState: "Running" },
+            OR: [
+              { runtimeState: "Running", pendingDeletion: false, appGroup: { runtimeState: "Running" } },
+              { actualReplicas: { gt: 0 } },
+            ],
           },
           select: {
             id: true,
@@ -599,11 +649,12 @@ export class CapacityTelemetryService {
             memoryBytes: true,
             actualReplicas: true,
             desiredReplicas: true,
+            appGroupId: true,
           },
         }),
         this.prisma.appGroupDeployment.findMany({
           where: {
-            status: "Deploying",
+            status: { in: ["Deploying", "RollingBack"] },
             phase: {
               in: [
                 "PreparingArtifacts",
@@ -611,6 +662,7 @@ export class CapacityTelemetryService {
                 "ApplyingStack",
                 "WaitingForRollout",
                 "Cleanup",
+                "RollingBack",
               ],
             },
           },
@@ -619,6 +671,48 @@ export class CapacityTelemetryService {
         this.store.latestNodes(),
         this.store.observationCount(),
       ]);
+
+    // The draft memory field can differ from the last deployed allocation.
+    // Use the successful stack snapshot for predictions, retaining the larger
+    // value when the inventory is uncertain.
+    const deployedLimits = new Map<string, bigint>();
+    const generations = new Map<string, { key: string; completedAt: number }>();
+    const groupIds = [...new Set(runningApps.map(app => app.appGroupId).filter(Boolean))];
+    if (groupIds.length > 0) {
+      const deployments = await this.prisma.appGroupDeployment.findMany({
+        where: { appGroupId: { in: groupIds }, status: { in: ["Succeeded", "RolledBack"] } },
+        orderBy: { version: "desc" },
+        select: { appGroupId: true, version: true, completedAt: true, status: true, rollbackTargetVersion: true, stackConfig: true },
+      });
+      const seen = new Set<string>();
+      for (const deployment of deployments) {
+        if (seen.has(deployment.appGroupId)) continue;
+        seen.add(deployment.appGroupId);
+        const artifact = deployment.status === "RolledBack"
+          ? deployments.find(row => row.appGroupId === deployment.appGroupId && row.version === deployment.rollbackTargetVersion && row.status === "Succeeded")
+          : deployment;
+        if (!artifact?.stackConfig) continue;
+        try {
+          const snapshot = JSON.parse(artifact.stackConfig) as CapacityDeploymentSnapshot;
+          if (snapshot.appGroup.id !== deployment.appGroupId) continue;
+          for (const app of snapshot.singleApps) {
+            if (app.id && /^\d+$/.test(app.resources.memoryBytes)) {
+              deployedLimits.set(app.id, BigInt(app.resources.memoryBytes));
+              if (deployment.completedAt) generations.set(app.id, {
+                key: `${deployment.appGroupId}:${deployment.version}:${deployment.completedAt.toISOString()}`,
+                completedAt: deployment.completedAt.getTime(),
+              });
+            }
+          }
+        } catch {
+          // Missing or malformed snapshots must not suppress existing limits.
+        }
+      }
+    }
+    const limitFor = (app: { id: string; memoryBytes: bigint }) => {
+      const deployed = deployedLimits.get(app.id);
+      return deployed !== undefined && deployed > app.memoryBytes ? deployed : app.memoryBytes;
+    };
 
     const historySince =
       Date.now() - policy.rareEventRetentionDays * 86_400_000;
@@ -632,7 +726,7 @@ export class CapacityTelemetryService {
     );
     const predictions = runningApps.map((app) => {
       const hard =
-        app.memoryBytes *
+        limitFor(app) *
         BigInt(Math.max(0, app.actualReplicas || app.desiredReplicas));
       return predictAppMemory(
         app.id,
@@ -643,7 +737,9 @@ export class CapacityTelemetryService {
     });
     const sampledReplicaCounts = new Map<string, number>();
     const admissionPredictions = runningApps.map((app) => {
-      const history = histories.get(app.id) ?? [];
+      const generation = generations.get(app.id);
+      if (!generation) return null;
+      const history = (histories.get(app.id) ?? []).filter(sample => Date.parse(sample.observedAt) > generation.completedAt);
       const latestSample = [...history].sort(
         (left, right) =>
           Date.parse(right.observedAt) - Date.parse(left.observedAt),
@@ -666,7 +762,7 @@ export class CapacityTelemetryService {
       return predictAppMemory(
         app.id,
         history,
-        app.memoryBytes * BigInt(replicas),
+        limitFor(app) * BigInt(replicas),
         policy,
       );
     });
@@ -711,7 +807,7 @@ export class CapacityTelemetryService {
     const hardLimitBytes = runningApps.reduce(
       (sum, app) =>
         sum +
-        app.memoryBytes *
+        limitFor(app) *
           BigInt(Math.max(0, app.actualReplicas || app.desiredReplicas)),
       0n,
     );
@@ -781,9 +877,10 @@ export class CapacityTelemetryService {
           if (replicas <= 0 || !prediction) return [];
           return [{
             appId: app.id,
+            generation: generations.get(app.id)?.key,
             replicas,
             hardLimitBytes: (
-              app.memoryBytes * BigInt(replicas)
+              limitFor(app) * BigInt(replicas)
             ).toString(),
             predictedBytes: prediction.predictedBytes.toString(),
             confidence: prediction.confidence,
@@ -846,6 +943,9 @@ export class CapacityTelemetryService {
       missingReplicaCount: error instanceof IncompleteReplicaTelemetryError
         ? error.missingReplicaCount
         : undefined,
+      unexpectedReplicaCount: error instanceof IncompleteReplicaTelemetryError
+        ? error.unexpectedReplicaCount
+        : undefined,
       admissionEvidence: null,
     });
     // Persist the failure even on a fresh instance with no previously published sample.
@@ -883,6 +983,7 @@ export class CapacityTelemetryService {
     currentByApp: Map<string, RunningAppCapacity>,
     evidenceByApp: Map<string, AdmissionAppEvidence>,
     currentPredictionByApp: Map<string, bigint>,
+    runtimeStart = false,
   ) {
     if (snapshot.appGroup.runtimeState !== "Running") return 0n;
     let increment = 0n;
@@ -906,6 +1007,16 @@ export class CapacityTelemetryService {
         increment += targetHard;
         continue;
       }
+      if (!runtimeStart && (!app.name || !current.serviceName ||
+          app.name.replaceAll("-", "_") !== current.serviceName.replaceAll("-", "_") ||
+          current.reverseStopFirst !== true)) {
+        // Reserve the entire incoming stack plus any old allocation not
+        // already covered by its baseline prediction. This bounds reverse
+        // overlap even when the previous hard limit exceeds the candidate.
+        const baseline = currentPredictionByApp.get(app.id) ?? current.hardLimitBytes;
+        increment += targetHard + (current.hardLimitBytes > baseline ? current.hardLimitBytes - baseline : 0n);
+        continue;
+      }
       const baseline =
         currentPredictionByApp.get(app.id) ?? current.hardLimitBytes;
       const observed = evidenceByApp.get(app.id);
@@ -917,7 +1028,26 @@ export class CapacityTelemetryService {
             targetHard,
           )
         : targetHard;
-      if (target > baseline) increment += target - baseline;
+      // Historical observations cannot predict consumption enabled by a
+      // newly increased per-replica limit. Reserve that additional limit
+      // conservatively, without counting existing predicted usage twice.
+      const currentUnit = current.hardLimitBytes / BigInt(Math.max(1, current.replicas));
+      const targetUnit = BigInt(app.resources.memoryBytes);
+      const limitGrowth = targetUnit > currentUnit
+        ? (targetUnit - currentUnit) * BigInt(targetReplicas)
+        : 0n;
+      const predictedGrowth = target > baseline ? target - baseline : 0n;
+      const growth = predictedGrowth > limitGrowth ? predictedGrowth : limitGrowth;
+      // Explicit start-first may overlap old and new tasks. Reserve the
+      // incoming batch at the hard limit, in addition to steady-state growth.
+      // Runtime-start snapshots are handled separately by the caller.
+      const parallelism = app.updatePolicy?.parallelism;
+      const overlap = !runtimeStart && app.updatePolicy?.order === "start-first"
+        ? Math.min(current.replicas, targetReplicas,
+            typeof parallelism === "number" && Number.isSafeInteger(parallelism) && parallelism > 0
+              ? parallelism : targetReplicas)
+        : 0;
+      increment += growth + BigInt(overlap) * BigInt(app.resources.memoryBytes);
     }
     return increment;
   }
@@ -1071,6 +1201,7 @@ export class CapacityTelemetryService {
       appIds.add(app.appId);
       apps.push({
         appId: app.appId,
+        generation: typeof app.generation === "string" && app.generation.length <= 256 ? app.generation : undefined,
         replicas: Number(app.replicas),
         hardLimitBytes,
         predictedBytes,
@@ -1145,7 +1276,16 @@ export class CapacityTelemetryReconcilerService
       const intervalMs =
         this.telemetry.policy().telemetryIntervalSeconds * 1000;
       if (!force && Date.now() - this.lastCollectedAt < intervalMs) return;
-      await this.telemetry.observeNow();
+      try {
+        await this.telemetry.observeNow();
+      } catch (error) {
+        if (!(error instanceof IncompleteReplicaTelemetryError)) throw error;
+        // Invalidate before retry: never admit from previously published
+        // evidence after detecting an inventory mismatch. A second full probe
+        // may recover a transient race with runtime reconciliation.
+        await this.telemetry.invalidatePublishedAdmissionEvidence(workerId, error, startedAt);
+        await this.telemetry.observeNow();
+      }
       publicationStarted = true;
       await this.telemetry.publishDiagnostics(workerId);
       this.lastCollectedAt = Date.now();

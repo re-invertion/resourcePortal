@@ -19,6 +19,10 @@ describe("capacity node probe parsers", () => {
     });
   });
 
+  it("rejects MemFree-only reports without actual MemAvailable", () => {
+    expect(parseMeminfo("MemTotal: 2048 kB\nMemFree: 1024 kB")).toBeNull();
+  });
+
   it("rejects impossible host memory reports", () => {
     expect(
       parseMeminfo([
@@ -138,6 +142,26 @@ describe("capacity node probe completeness", () => {
       swarmNodeId: nodeId,
       reason: "ContainerTelemetryUnavailable",
     });
+  });
+});
+
+describe("capacity node probe inventory stability", () => {
+  it.each([false, true])("rejects newly started containers after sampling (initially occupied=%s)", async occupied => {
+    let calls = 0;
+    const docker = (args: string[]): Promise<string | null> => {
+      if (args[0] === "info") return Promise.resolve(nodeId);
+      if (args[0] === "ps") {
+        calls++;
+        const initial = occupied ? [containerA + "\t" + appId] : [];
+        return Promise.resolve((calls === 1 ? initial : [...initial, containerB + "\t" + appId]).join("\n"));
+      }
+      if (args[0] === "inspect") return Promise.resolve(containerA + "\t123\t2026-11-02T12:00:00.000Z");
+      return Promise.resolve(null);
+    };
+    await expect(probeSwarmNodeCapacity({ docker, readFile: baseReadFile, realpath: path => Promise.resolve(path) })).resolves.toMatchObject({
+      status: "Unavailable", reason: "ContainerInventoryChanged",
+    });
+    expect(calls).toBe(2);
   });
 });
 

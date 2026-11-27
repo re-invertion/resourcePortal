@@ -16,12 +16,15 @@ import { CapacityTelemetryService } from "./capacity-telemetry.service";
 const CAPACITY_LOCK_NAMESPACE = "resourceportal:capacity:swarm";
 const SWARM_CLUSTER_SINGLETON_ID = "00000000-0000-0000-0000-000000000013";
 
+const POSSIBLY_APPLIED_PHASES: DeploymentPhase[] = [DeploymentPhase.ApplyingStack, DeploymentPhase.WaitingForRollout, DeploymentPhase.RollingBack, DeploymentPhase.Cleanup, DeploymentPhase.Completed];
+
 const ADMITTED_PHASES = new Set<DeploymentPhase>([
   DeploymentPhase.PreparingArtifacts,
   DeploymentPhase.GeneratingStack,
   DeploymentPhase.ApplyingStack,
   DeploymentPhase.WaitingForRollout,
   DeploymentPhase.Cleanup,
+  DeploymentPhase.RollingBack,
 ]);
 
 export type CapacityErrorCode =
@@ -34,10 +37,13 @@ export type CapacityDeploymentSnapshot = {
     tenantId: string;
     runtimeState: string;
   };
+  rollbackSnapshot?: CapacityDeploymentSnapshot;
   singleApps: Array<
     CapacitySnapshotSingleApp & {
       id?: string;
+      name?: string;
       volumes: Array<{ volumeId: string }>;
+      updatePolicy?: { order?: unknown; parallelism?: unknown };
     }
   >;
 };
@@ -68,6 +74,7 @@ type DeploymentReservationRow = {
   version: number;
   status: DeploymentStatus;
   phase: DeploymentPhase;
+  rollbackTargetVersion?: number | null;
   stackConfig: string | null;
 };
 
@@ -83,6 +90,31 @@ export class CapacityPreflightService {
     @Optional() private readonly telemetry?: CapacityTelemetryService,
     @Optional() private readonly policy?: CapacityPolicyService,
   ) {}
+
+  async hybridBudget(tx: Prisma.TransactionClient) {
+    if (!this.telemetry) return null;
+    const platform = await this.availablePlatformSupply(tx);
+    if (!platform.success) return null;
+    const [runningApps, inFlightSnapshots] = await Promise.all([
+      this.currentRunningApps(tx),
+      this.inFlightSnapshots(tx),
+    ]);
+    if (!inFlightSnapshots) return null;
+    const result = await this.telemetry.evaluateAdmission({
+      snapshot: { appGroup: { id: "", tenantId: "", runtimeState: "Stopped" }, singleApps: [] },
+      runningApps,
+      inFlightSnapshots,
+      schedulableNodeIds: platform.schedulableNodeIds,
+    });
+    if (!result.usable) return null;
+    return {
+      deployableHeadroomBytes: (result.decision.deployableHeadroomBytes ?? 0n).toString(),
+      predictedExistingGrowthBytes: result.decision.predictedExistingGrowthBytes.toString(),
+      inFlightPredictedBytes: result.decision.inFlightPredictedBytes.toString(),
+      allowed: result.decision.allowed,
+      reason: result.decision.reason,
+    };
+  }
 
   async admitDeployment(
     tx: Prisma.TransactionClient,
@@ -105,13 +137,35 @@ export class CapacityPreflightService {
       return occupiedResult;
     }
 
+    const candidateDemand = snapshotDemand(snapshot);
+    const previous = await tx.appGroupDeployment.findFirst({
+      where: { appGroupId: snapshot.appGroup.id, status: DeploymentStatus.Succeeded },
+      orderBy: { version: "desc" },
+      select: { stackConfig: true },
+    });
+    let peakDemand = candidateDemand;
+    let rollbackSnapshot: CapacityDeploymentSnapshot | undefined;
+    if (previous) {
+      const deployed = this.parseSnapshot(previous.stackConfig);
+      if (!deployed || deployed.appGroup.id !== snapshot.appGroup.id ||
+          deployed.appGroup.tenantId !== snapshot.appGroup.tenantId) {
+        return this.platformUnavailable("Cannot account preceding deployment capacity");
+      }
+      rollbackSnapshot = deployed;
+      const live = await this.succeededRuntimeDemand(tx, deployed);
+      const restored = snapshotDemand(deployed);
+      const old = { cpuNano: live.cpuNano > restored.cpuNano ? live.cpuNano : restored.cpuNano, memoryBytes: live.memoryBytes > restored.memoryBytes ? live.memoryBytes : restored.memoryBytes };
+      peakDemand = this.rolloutReservation(snapshot, candidateDemand, deployed, old);
+    }
     return this.fitAdmission(
       tx,
       snapshot,
       platformResult.supply,
       occupiedResult.occupied,
-      snapshotDemand(snapshot),
+      peakDemand,
       platformResult.schedulableNodeIds,
+      false,
+      rollbackSnapshot,
     );
   }
 
@@ -130,7 +184,12 @@ export class CapacityPreflightService {
       select: { stackConfig: true },
     });
 
-    if (!deployment?.stackConfig) {
+    if (deployment && !deployment.stackConfig) return this.platformUnavailable("Cannot account committed runtime capacity");
+    if (!deployment) {
+      const unresolved = await this.inFlightSnapshots(tx);
+      if (!unresolved || unresolved.some(item => item.appGroup.id === input.appGroupId)) {
+        return this.platformUnavailable("Cannot start runtime with unresolved deployment capacity");
+      }
       return {
         success: true,
         demand: { cpuNano: 0n, memoryBytes: 0n },
@@ -192,6 +251,7 @@ export class CapacityPreflightService {
       occupiedResult.occupied,
       demand,
       platformResult.schedulableNodeIds,
+      true,
     );
   }
 
@@ -255,6 +315,8 @@ export class CapacityPreflightService {
     occupied: CapacityDemand,
     demand: CapacityDemand,
     schedulableNodeIds: string[],
+    runtimeStart = false,
+    rollbackSnapshot?: CapacityDeploymentSnapshot,
   ): Promise<CapacityAdmissionResult> {
     const fit = projectedCapacityFits(supply, occupied, demand);
 
@@ -272,13 +334,16 @@ export class CapacityPreflightService {
     if (configuredMode === "Hybrid" && this.telemetry) {
       const [runningApps, inFlightSnapshots] = await Promise.all([
         this.currentRunningApps(tx),
-        this.inFlightSnapshots(tx, snapshot.appGroup.id),
+        this.inFlightSnapshots(tx),
       ]);
+      if (!inFlightSnapshots) return this.platformUnavailable("Cannot account active deployment capacity");
       const hybrid = await this.telemetry.evaluateAdmission({
         snapshot,
         runningApps,
         inFlightSnapshots,
         schedulableNodeIds,
+        runtimeStart,
+        rollbackSnapshot,
       });
       if (hybrid.usable) {
         if (hybrid.decision.allowed) {
@@ -437,12 +502,13 @@ export class CapacityPreflightService {
 
   private async currentRunningApps(
     tx: Prisma.TransactionClient,
-  ): Promise<Array<{ appId: string; hardLimitBytes: bigint; replicas: number }>> {
+  ): Promise<Array<{ appId: string; hardLimitBytes: bigint; replicas: number; serviceName?: string; reverseStopFirst?: boolean; generation?: string }>> {
     const rows = await tx.singleApp.findMany({
       where: {
-        runtimeState: "Running",
-        pendingDeletion: false,
-        appGroup: { runtimeState: "Running" },
+        OR: [
+          { runtimeState: "Running", pendingDeletion: false, appGroup: { runtimeState: "Running" } },
+          { actualReplicas: { gt: 0 } },
+        ],
       },
       select: {
         id: true,
@@ -450,6 +516,9 @@ export class CapacityPreflightService {
         memoryBytes: true,
         desiredReplicas: true,
         actualReplicas: true,
+        runtimeState: true,
+        pendingDeletion: true,
+        appGroup: { select: { runtimeState: true } },
       },
     });
     if (rows.length === 0) return [];
@@ -458,24 +527,30 @@ export class CapacityPreflightService {
     const deployments = await tx.appGroupDeployment.findMany({
       where: {
         appGroupId: { in: appGroupIds },
-        status: DeploymentStatus.Succeeded,
+        status: { in: [DeploymentStatus.Succeeded, DeploymentStatus.RolledBack] },
       },
       orderBy: { version: "desc" },
       select: {
         appGroupId: true,
         version: true,
+        completedAt: true,
+        status: true,
+        rollbackTargetVersion: true,
         stackConfig: true,
       },
     });
     const latestSeen = new Set<string>();
     const deployedByApp = new Map<
       string,
-      { replicas: number; memoryBytes: bigint }
+      { replicas: number; memoryBytes: bigint; serviceName?: string; reverseStopFirst?: boolean; generation?: string }
     >();
     for (const deployment of deployments) {
       if (latestSeen.has(deployment.appGroupId)) continue;
       latestSeen.add(deployment.appGroupId);
-      const parsed = this.parseSnapshot(deployment.stackConfig);
+      const artifact = deployment.status === DeploymentStatus.RolledBack
+        ? deployments.find(row => row.appGroupId === deployment.appGroupId && row.version === deployment.rollbackTargetVersion && row.status === DeploymentStatus.Succeeded)
+        : deployment;
+      const parsed = this.parseSnapshot(artifact?.stackConfig ?? null);
       if (!parsed) continue;
       for (const singleApp of parsed.singleApps) {
         if (!singleApp.id) continue;
@@ -483,6 +558,9 @@ export class CapacityPreflightService {
           deployedByApp.set(singleApp.id, {
             replicas: Math.max(0, singleApp.desiredReplicas),
             memoryBytes: BigInt(singleApp.resources.memoryBytes),
+            serviceName: singleApp.name,
+            reverseStopFirst: singleApp.updatePolicy?.order === "stop-first",
+            generation: deployment.completedAt ? `${deployment.appGroupId}:${deployment.version}:${deployment.completedAt.toISOString()}` : undefined,
           });
         } catch {
           // Fall back to the current row below. Admission remains conservative.
@@ -492,10 +570,12 @@ export class CapacityPreflightService {
 
     return rows.flatMap((item) => {
       const deployed = deployedByApp.get(item.id);
+      const running = item.runtimeState === "Running" &&
+        !item.pendingDeletion && item.appGroup.runtimeState === "Running";
       const replicas = Math.max(
         0,
         item.actualReplicas,
-        deployed?.replicas ?? item.desiredReplicas,
+        running ? (deployed?.replicas ?? item.desiredReplicas) : 0,
       );
       if (replicas <= 0) return [];
       const memoryBytes = deployed?.memoryBytes ?? item.memoryBytes;
@@ -503,33 +583,71 @@ export class CapacityPreflightService {
         appId: item.id,
         hardLimitBytes: memoryBytes * BigInt(replicas),
         replicas,
+        serviceName: deployed?.serviceName,
+        reverseStopFirst: deployed?.reverseStopFirst,
+        generation: deployed?.generation,
       }];
     });
   }
 
   private async inFlightSnapshots(
     tx: Prisma.TransactionClient,
-    excludedAppGroupId: string,
-  ): Promise<CapacityDeploymentSnapshot[]> {
+    excludedAppGroupId?: string,
+  ): Promise<CapacityDeploymentSnapshot[] | null> {
     const rows = await tx.appGroupDeployment.findMany({
       where: {
-        appGroupId: { not: excludedAppGroupId },
-        status: DeploymentStatus.Deploying,
-        phase: { in: Array.from(ADMITTED_PHASES) },
+        ...(excludedAppGroupId ? { appGroupId: { not: excludedAppGroupId } } : {}),
+        OR: [
+          { status: { in: [DeploymentStatus.Deploying, DeploymentStatus.RollingBack] }, phase: { in: Array.from(ADMITTED_PHASES) } },
+          { status: DeploymentStatus.RollbackFailed },
+          { status: DeploymentStatus.Failed, phase: { in: POSSIBLY_APPLIED_PHASES } },
+        ],
       },
-      select: { stackConfig: true },
+      select: { stackConfig: true, appGroupId: true, version: true, status: true },
     });
-    return rows
-      .map((row) => this.parseSnapshot(row.stackConfig))
-      .filter((row): row is CapacityDeploymentSnapshot => row !== null);
+    const groupIds = [...new Set(rows.map(row => row.appGroupId).filter(Boolean))];
+    const successes = groupIds.length ? await tx.appGroupDeployment.findMany({
+      where: { appGroupId: { in: groupIds }, status: { in: [DeploymentStatus.Succeeded, DeploymentStatus.RolledBack] } },
+      orderBy: { version: "desc" },
+      select: { appGroupId: true, version: true, status: true, rollbackTargetVersion: true, stackConfig: true },
+    }) : [];
+    const snapshots: CapacityDeploymentSnapshot[] = [];
+    for (const row of rows) {
+      const boundary = successes.find(success => success.appGroupId === row.appGroupId);
+      const previous = boundary?.status === DeploymentStatus.RolledBack
+        ? successes.find(success => success.appGroupId === row.appGroupId && success.status === DeploymentStatus.Succeeded && success.version === boundary.rollbackTargetVersion)
+        : boundary;
+      if (boundary && !previous) return null;
+      if (boundary && boundary.version > row.version) continue;
+      const snapshot = this.parseSnapshot(row.stackConfig);
+      if (!snapshot) return null;
+      if (previous) {
+        const rollback = this.parseSnapshot(previous.stackConfig);
+        if (!rollback || rollback.appGroup.id !== snapshot.appGroup.id ||
+            rollback.appGroup.tenantId !== snapshot.appGroup.tenantId) return null;
+        snapshot.rollbackSnapshot = rollback;
+      }
+      snapshots.push(snapshot);
+    }
+    return snapshots;
   }
 
   private async platformCapacity(tx: Prisma.TransactionClient) {
     const rows = await tx.$queryRaw<PlatformCapacityRow[]>(Prisma.sql`
       SELECT
         c."health"::text AS "health",
-        COALESCE(SUM(r."availableCpuNano"), 0)::bigint AS "availableCpuNano",
-        COALESCE(SUM(r."availableMemoryBytes"), 0)::bigint AS "availableMemoryBytes",
+        COALESCE(SUM(r."availableCpuNano") FILTER (
+          WHERE r."status" = 'Ready'
+            AND r."availability" = 'Active'
+            AND r."maintenance" = false
+            AND r."health" IN ('Healthy', 'Degraded')
+        ), 0)::bigint AS "availableCpuNano",
+        COALESCE(SUM(r."availableMemoryBytes") FILTER (
+          WHERE r."status" = 'Ready'
+            AND r."availability" = 'Active'
+            AND r."maintenance" = false
+            AND r."health" IN ('Healthy', 'Degraded')
+        ), 0)::bigint AS "availableMemoryBytes",
         COUNT(*) FILTER (
           WHERE r."status" = 'Ready'
             AND r."availability" = 'Active'
@@ -641,10 +759,13 @@ export class CapacityPreflightService {
   > {
     const deployments = await tx.appGroupDeployment.findMany({
       where: {
-        appGroupId: { not: excludedAppGroupId },
         OR: [
           { status: DeploymentStatus.Succeeded },
+          { status: DeploymentStatus.RolledBack },
           { status: DeploymentStatus.Deploying },
+          { status: DeploymentStatus.RollingBack },
+          { status: DeploymentStatus.RollbackFailed },
+          { status: DeploymentStatus.Failed, phase: { in: POSSIBLY_APPLIED_PHASES } },
         ],
       },
       select: {
@@ -652,6 +773,7 @@ export class CapacityPreflightService {
         version: true,
         status: true,
         phase: true,
+        rollbackTargetVersion: true,
         stackConfig: true,
       },
     });
@@ -665,47 +787,50 @@ export class CapacityPreflightService {
 
     let occupied: CapacityDemand = { cpuNano: 0n, memoryBytes: 0n };
     for (const rows of byAppGroup.values()) {
-      const active = rows
-        .filter(
-          (row) =>
-            row.status === DeploymentStatus.Deploying &&
-            ADMITTED_PHASES.has(row.phase),
-        )
+      const boundary = rows
+        .filter(row => row.status === DeploymentStatus.Succeeded || row.status === DeploymentStatus.RolledBack)
         .sort((a, b) => b.version - a.version)[0];
-      const succeeded = rows
-        .filter((row) => row.status === DeploymentStatus.Succeeded)
-        .sort((a, b) => b.version - a.version)[0];
-      const selected = active ?? succeeded;
-      if (!selected) {
-        continue;
-      }
-
-      const parsed = this.parseSnapshot(selected.stackConfig);
-      if (!parsed) {
+      const succeeded = boundary?.status === DeploymentStatus.RolledBack
+        ? rows.find(row => row.status === DeploymentStatus.Succeeded && row.version === boundary.rollbackTargetVersion)
+        : boundary;
+      if (boundary && !succeeded) return this.platformUnavailable(`Cannot account restored capacity for AppGroup ${boundary.appGroupId}`);
+      const active = rows.filter(row =>
+        (!boundary || row.version > boundary.version) &&
+        (row.status === DeploymentStatus.RollbackFailed ||
+          (row.status === DeploymentStatus.Failed && POSSIBLY_APPLIED_PHASES.includes(row.phase)) ||
+          ((row.status === DeploymentStatus.Deploying || row.status === DeploymentStatus.RollingBack) &&
+            ADMITTED_PHASES.has(row.phase))),
+      );
+      let demand: CapacityDemand = { cpuNano: 0n, memoryBytes: 0n };
+      const previous = succeeded ? this.parseSnapshot(succeeded.stackConfig) : null;
+      if (succeeded && !previous) {
         return this.platformUnavailable(
-          `Cannot account deployment capacity for AppGroup ${selected.appGroupId}`,
+          `Cannot account previous capacity for AppGroup ${succeeded.appGroupId}`,
         );
       }
-      let demand = active
-        ? snapshotDemand(parsed)
-        : await this.succeededRuntimeDemand(tx, parsed);
-      if (active && succeeded) {
-        // The preceding successful stack can remain live during a rollout.
-        // Do not release its CPU/RAM reservation merely because a smaller
-        // draft has entered PreparingArtifacts. Retain each resource high-water
-        // mark until the new deployment has actually succeeded.
-        const previous = this.parseSnapshot(succeeded.stackConfig);
-        if (!previous) {
+      const sameGroup = rows[0].appGroupId === excludedAppGroupId;
+      if (previous && !sameGroup) {
+        demand = await this.succeededRuntimeDemand(tx, previous);
+        if (active.length) {
+          const restored = snapshotDemand(previous);
+          demand = { cpuNano: demand.cpuNano > restored.cpuNano ? demand.cpuNano : restored.cpuNano, memoryBytes: demand.memoryBytes > restored.memoryBytes ? demand.memoryBytes : restored.memoryBytes };
+        }
+      }
+      for (const row of active) {
+        const parsed = this.parseSnapshot(row.stackConfig);
+        if (!parsed) {
           return this.platformUnavailable(
-            `Cannot account previous capacity for AppGroup ${succeeded.appGroupId}`,
+            `Cannot account deployment capacity for AppGroup ${row.appGroupId}`,
           );
         }
-        const oldDemand = await this.succeededRuntimeDemand(tx, previous);
-        demand = {
-          cpuNano: demand.cpuNano > oldDemand.cpuNano ? demand.cpuNano : oldDemand.cpuNano,
-          memoryBytes: demand.memoryBytes > oldDemand.memoryBytes
-            ? demand.memoryBytes : oldDemand.memoryBytes,
-        };
+        const target = snapshotDemand(parsed);
+        // Multiple unresolved attempts may leave distinct service identities
+        // live. Only a single ordered replacement may credit the baseline.
+        if (!sameGroup && active.length === 1 && previous && row.status !== DeploymentStatus.RollbackFailed && row.status !== DeploymentStatus.Failed) {
+          demand = this.rolloutReservation(parsed, target, previous, demand);
+        } else {
+          demand = { cpuNano: demand.cpuNano + target.cpuNano, memoryBytes: demand.memoryBytes + target.memoryBytes };
+        }
       }
       occupied = {
         cpuNano: occupied.cpuNano + demand.cpuNano,
@@ -714,6 +839,43 @@ export class CapacityPreflightService {
     }
 
     return { success: true, occupied };
+  }
+
+  private rolloutReservation(
+    snapshot: CapacityDeploymentSnapshot,
+    target: CapacityDemand,
+    deployed: CapacityDeploymentSnapshot,
+    previous: CapacityDemand,
+  ): CapacityDemand {
+    // A group-wide maximum alone is unsafe when some services grow while
+    // others shrink. Without proof of an ordered replacement, reserve both
+    // allocations. Credit the old allocation only for a structurally
+    // non-increasing, explicit stop-first replacement of the same services.
+    const oldById = new Map(deployed.singleApps.map(app => [app.id, app]));
+    const nonIncreasing = snapshot.appGroup.runtimeState === "Running" &&
+      deployed.appGroup.runtimeState === "Running" &&
+      snapshot.singleApps.length === deployed.singleApps.length &&
+      oldById.size === deployed.singleApps.length &&
+      new Set(snapshot.singleApps.map(app => app.id)).size === snapshot.singleApps.length &&
+      snapshot.singleApps.every(app => {
+        const old = oldById.get(app.id);
+        if (!app.id || !old || !app.name || !old.name ||
+            app.name.replaceAll("-", "_") !== old.name.replaceAll("-", "_") ||
+            app.updatePolicy?.order !== "stop-first" || old.updatePolicy?.order !== "stop-first" ||
+            app.runtimeState !== old.runtimeState ||
+            app.desiredReplicas > old.desiredReplicas ||
+            app.resources.gpu !== old.resources.gpu) return false;
+        const nextUnit = snapshotDemand({ appGroup: { runtimeState: "Running" },
+          singleApps: [{ ...app, runtimeState: "Running", desiredReplicas: 1 }] });
+        const oldUnit = snapshotDemand({ appGroup: { runtimeState: "Running" },
+          singleApps: [{ ...old, runtimeState: "Running", desiredReplicas: 1 }] });
+        return nextUnit.cpuNano <= oldUnit.cpuNano &&
+          nextUnit.memoryBytes <= oldUnit.memoryBytes;
+      });
+    return {
+      cpuNano: nonIncreasing ? (target.cpuNano > previous.cpuNano ? target.cpuNano : previous.cpuNano) : target.cpuNano + previous.cpuNano,
+      memoryBytes: nonIncreasing ? (target.memoryBytes > previous.memoryBytes ? target.memoryBytes : previous.memoryBytes) : target.memoryBytes + previous.memoryBytes,
+    };
   }
 
   private async succeededRuntimeDemand(
@@ -812,7 +974,15 @@ export class CapacityPreflightService {
         !parsed?.appGroup ||
         typeof parsed.appGroup.id !== "string" ||
         typeof parsed.appGroup.runtimeState !== "string" ||
-        !Array.isArray(parsed.singleApps)
+        !Array.isArray(parsed.singleApps) ||
+        parsed.singleApps.some(app =>
+          !app || !["Running", "Stopped"].includes(app.runtimeState) ||
+          !Number.isSafeInteger(app.desiredReplicas) || app.desiredReplicas < 0 ||
+          !app.resources ||
+          typeof app.resources.memoryBytes !== "string" ||
+          !/^[0-9]+$/.test(app.resources.memoryBytes) ||
+          !Array.isArray(app.volumes)
+        )
       ) {
         return null;
       }

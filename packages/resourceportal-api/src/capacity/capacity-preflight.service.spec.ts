@@ -89,6 +89,77 @@ describe("Stage 15 capacity preflight", () => {
       ]);
   }
 
+  it("filters both CPU and memory supply to the same schedulable inventory", async () => {
+    platform();
+    await service.admitDeployment(tx, deploymentSnapshot());
+    const sql = (queryRaw.mock.calls[1][0] as Prisma.Sql).sql;
+    for (const resource of ["availableCpuNano", "availableMemoryBytes"]) {
+      const start = sql.indexOf('SUM(r."' + resource + '") FILTER');
+      expect(start).toBeGreaterThanOrEqual(0);
+      const filter = sql.slice(start, sql.indexOf('), 0)', start));
+      expect(filter).toContain("r.\"status\" = 'Ready'");
+      expect(filter).toContain("r.\"availability\" = 'Active'");
+      expect(filter).toContain('r."maintenance" = false');
+      expect(filter).toContain("r.\"health\" IN ('Healthy', 'Degraded')");
+    }
+  });
+
+  it.each(["start-first", "stop-first"] as const)(
+    "accounts for an existing candidate with %s order",
+    async order => {
+      platform({ cpuNano: 8_000_000_000n, memoryBytes: 3_072n });
+      const snapshot = deploymentSnapshot();
+      snapshot.singleApps[0].id = "existing-app";
+      snapshot.singleApps[0].name = "existing-app";
+      snapshot.singleApps[0].updatePolicy = { order };
+      findLatestDeployment.mockResolvedValue({ stackConfig: serializedSnapshot(snapshot) });
+      const result = await service.admitDeployment(tx, snapshot);
+      expect(result.success).toBe(order === "stop-first");
+      if (result.success) expect(result.demand.memoryBytes).toBe(2_048n);
+    },
+  );
+
+  it.each(["rename", "reverse-start-first"] as const)("reserves both stacks for %s", async scenario => {
+    platform({ cpuNano: 8_000_000_000n, memoryBytes: 3_072n });
+    const old = deploymentSnapshot();
+    Object.assign(old.singleApps[0], { id: "existing", name: "old-name", updatePolicy: { order: scenario === "rename" ? "stop-first" : "start-first" } });
+    const target = structuredClone(old);
+    target.singleApps[0].updatePolicy = { order: "stop-first" };
+    if (scenario === "rename") target.singleApps[0].name = "new-name";
+    findLatestDeployment.mockResolvedValue({ stackConfig: serializedSnapshot(old) });
+    await expect(service.admitDeployment(tx, target)).resolves.toMatchObject({ success: false, errorCode: "InsufficientCapacity" });
+  });
+
+  it("reserves the prior artifact even if its runtime is now stopped", async () => {
+    platform({ cpuNano: 20_000_000_000n, memoryBytes: 3_072n });
+    const old = deploymentSnapshot({ cpu: "1", memoryBytes: "4096" });
+    old.singleApps[0].id = "existing-app";
+    old.singleApps[0].name = "existing-app";
+    const target = { ...old, singleApps: [] };
+    findLatestDeployment.mockResolvedValue({ stackConfig: serializedSnapshot(old) });
+    findAppGroup.mockResolvedValue({ runtimeState: "Stopped" });
+    findSingleApps.mockResolvedValue([{ id: "existing-app", runtimeState: "Stopped", actualReplicas: 0, desiredReplicas: 1 }]);
+    await expect(service.admitDeployment(tx, target)).resolves.toMatchObject({ success: false, errorCode: "InsufficientCapacity" });
+  });
+
+  it("does not offset a growing stop-first service against a shrinking service", async () => {
+    platform({ cpuNano: 20_000_000_000n, memoryBytes: 6_144n });
+    const old = deploymentSnapshot({ cpu: "1", memoryBytes: "4096" });
+    old.singleApps[0].id = "app-a";
+    old.singleApps[0].updatePolicy = { order: "stop-first" };
+    old.singleApps.push({
+      ...old.singleApps[0], id: "app-b",
+      resources: { ...old.singleApps[0].resources, memoryBytes: "1024" },
+    });
+    const target = { ...old, singleApps: old.singleApps.map((app, index) => ({
+      ...app, resources: { ...app.resources, memoryBytes: index === 0 ? "1024" : "4096" },
+    })) };
+    findLatestDeployment.mockResolvedValue({ stackConfig: serializedSnapshot(old) });
+    await expect(service.admitDeployment(tx, target)).resolves.toMatchObject({
+      success: false, errorCode: "InsufficientCapacity",
+    });
+  });
+
   it("returns PlatformUnavailable when Swarm inventory has not been reconciled", async () => {
     queryRaw
       .mockResolvedValueOnce([{ locked: true }])
@@ -178,6 +249,72 @@ describe("Stage 15 capacity preflight", () => {
     await expect(
       service.admitDeployment(tx, deploymentSnapshot({ cpu: "2" })),
     ).resolves.toMatchObject({ success: false, errorCode: "InsufficientCapacity" });
+  });
+
+  it.each([DeploymentStatus.RollingBack, DeploymentStatus.RollbackFailed])("retains concurrent reservation during %s until newer success", async status => {
+    platform({ cpuNano: 20_000_000_000n, memoryBytes: 6_144n });
+    const id = "other-group";
+    const previous = deploymentSnapshot({ id, cpu: "1", memoryBytes: "4096" });
+    const target = deploymentSnapshot({ id, cpu: "1", memoryBytes: "2048" });
+    findDeployments.mockResolvedValue([
+      { appGroupId: id, version: 1, status: DeploymentStatus.Succeeded, phase: DeploymentPhase.Completed, stackConfig: serializedSnapshot(previous) },
+      { appGroupId: id, version: 2, status, phase: status === DeploymentStatus.RollingBack ? DeploymentPhase.RollingBack : DeploymentPhase.Completed, stackConfig: serializedSnapshot(target) },
+    ]);
+    await expect(service.admitDeployment(tx, deploymentSnapshot({ cpu: "1", memoryBytes: "1024" }))).resolves.toMatchObject({ success: false, errorCode: "InsufficientCapacity" });
+  });
+
+  it.each([DeploymentPhase.ApplyingStack, DeploymentPhase.WaitingForRollout, DeploymentPhase.Validating])("retains failed deployment reservations only after possible application (%s)", async phase => {
+    platform({ cpuNano: 20_000_000_000n, memoryBytes: 3_072n });
+    const id = "other-group";
+    findDeployments.mockResolvedValue([{
+      appGroupId: id, version: 1, status: DeploymentStatus.Failed, phase,
+      stackConfig: serializedSnapshot(deploymentSnapshot({ id, cpu: "1", memoryBytes: "2048" })),
+    }]);
+    const result = await service.admitDeployment(tx, deploymentSnapshot({ cpu: "1", memoryBytes: "2048" }));
+    expect(result.success).toBe(phase === DeploymentPhase.Validating);
+  });
+
+  it("rejects runtime start without a successful artifact when a failed stack may remain", async () => {
+    queryRaw.mockResolvedValueOnce([{ locked: true }]);
+    const target = deploymentSnapshot();
+    findDeployments.mockResolvedValueOnce([{
+      appGroupId: target.appGroup.id, version: 1, status: DeploymentStatus.RollbackFailed,
+      stackConfig: serializedSnapshot(target),
+    }]).mockResolvedValueOnce([]);
+    await expect(service.admitRuntimeStart(tx, { appGroupId: target.appGroup.id })).resolves.toMatchObject({ success: false, errorCode: "PlatformUnavailable" });
+  });
+
+  it("does not exclude unresolved reservations belonging to the candidate group", async () => {
+    platform({ cpuNano: 20_000_000_000n, memoryBytes: 3_072n });
+    const target = deploymentSnapshot({ cpu: "1", memoryBytes: "2048" });
+    findDeployments.mockResolvedValue([{
+      appGroupId: target.appGroup.id, version: 1, status: DeploymentStatus.RollbackFailed, phase: DeploymentPhase.Completed,
+      stackConfig: serializedSnapshot(target),
+    }]);
+    await expect(service.admitDeployment(tx, target)).resolves.toMatchObject({ success: false, errorCode: "InsufficientCapacity" });
+  });
+
+  it.each([DeploymentStatus.Succeeded, DeploymentStatus.RolledBack])("retains all unresolved failed rollback versions until a newer %s", async status => {
+    platform({ cpuNano: 20_000_000_000n, memoryBytes: 7_168n });
+    const id = "other-group";
+    const row = (version: number, status: DeploymentStatus, memoryBytes: string) => ({
+      appGroupId: id, version, status, phase: DeploymentPhase.Completed,
+      stackConfig: serializedSnapshot(deploymentSnapshot({ id, cpu: "1", memoryBytes })),
+    });
+    findDeployments.mockResolvedValue([
+      row(1, DeploymentStatus.Succeeded, "2048"),
+      row(2, DeploymentStatus.RollbackFailed, "2048"),
+      row(3, DeploymentStatus.RollbackFailed, "2048"),
+    ]);
+    await expect(service.admitDeployment(tx, deploymentSnapshot({ cpu: "1", memoryBytes: "2048" }))).resolves.toMatchObject({ success: false, errorCode: "InsufficientCapacity" });
+    platform({ cpuNano: 20_000_000_000n, memoryBytes: 7_168n });
+    findDeployments.mockResolvedValue([
+      row(1, DeploymentStatus.Succeeded, "2048"),
+      row(2, DeploymentStatus.RollbackFailed, "2048"),
+      row(3, DeploymentStatus.RollbackFailed, "2048"),
+      { ...row(4, status, status === DeploymentStatus.RolledBack ? "8192" : "2048"), rollbackTargetVersion: status === DeploymentStatus.RolledBack ? 1 : null },
+    ]);
+    await expect(service.admitDeployment(tx, deploymentSnapshot({ cpu: "1", memoryBytes: "2048" }))).resolves.toMatchObject({ success: true, occupied: { memoryBytes: 2048n } });
   });
 
   it("does not reserve capacity for another deployment still in Validating", async () => {
@@ -602,6 +739,40 @@ describe("Stage 15 capacity preflight", () => {
       });
   });
 
+  describe("Hybrid deployable budget (#500)", () => {
+    it("returns no budget when telemetry is stale", async () => {
+      queryRaw.mockResolvedValueOnce([{ health: "Healthy", availableCpuNano: 4_000_000_000n, availableMemoryBytes: 8_192n, schedulableNodeCount: 1n, schedulableNodeIds: ["ku2gbq2sm1b2khra543dtyxfg"] }]);
+      const evaluateAdmission = vi.fn().mockResolvedValue({ usable: false, reason: "fresh worker-published Hybrid admission telemetry is unavailable" });
+      service = new CapacityPreflightService(
+        { evaluateAdmission } as never,
+        { current: () => ({ mode: "Hybrid" }) } as never,
+      );
+      await expect(service.hybridBudget(tx)).resolves.toBeNull();
+      expect(evaluateAdmission).toHaveBeenCalledOnce();
+    });
+
+    it("serializes the limiting-node budget after growth and in-flight demand", async () => {
+      queryRaw.mockResolvedValueOnce([{ health: "Healthy", availableCpuNano: 4_000_000_000n, availableMemoryBytes: 8_192n, schedulableNodeCount: 1n, schedulableNodeIds: ["ku2gbq2sm1b2khra543dtyxfg"] }]);
+      const GiB = 1_073_741_824n;
+      const evaluateAdmission = vi.fn().mockResolvedValue({ usable: true, decision: {
+        deployableHeadroomBytes: 15n * GiB,
+        predictedExistingGrowthBytes: 16n * GiB,
+        inFlightPredictedBytes: GiB,
+        allowed: true, reason: "test",
+      } });
+      service = new CapacityPreflightService(
+        { evaluateAdmission } as never,
+        { current: () => ({ mode: "Hybrid" }) } as never,
+      );
+      await expect(service.hybridBudget(tx)).resolves.toMatchObject({
+        deployableHeadroomBytes: (15n * GiB).toString(),
+        predictedExistingGrowthBytes: (16n * GiB).toString(),
+        inFlightPredictedBytes: GiB.toString(),
+        allowed: true,
+      });
+    });
+  });
+
   describe("Hybrid strict-fallback diagnostics (#409)", () => {
     function nearLimitReservation() {
       platform({ cpuNano: 10_000_000_000n, memoryBytes: 8_192n });
@@ -616,6 +787,71 @@ describe("Stage 15 capacity preflight", () => {
         })),
       }]);
     }
+
+    it.each(["invalid JSON", JSON.stringify({
+      appGroup: { id: "other-group", runtimeState: "Running" },
+      singleApps: [{ runtimeState: "Running", desiredReplicas: -1, resources: { memoryBytes: "1024" }, volumes: [] }],
+    })])("rejects unreadable in-flight reservations before evaluating Hybrid capacity (%s)", async invalidSnapshot => {
+      platform();
+      findDeployments.mockResolvedValueOnce([]).mockResolvedValueOnce([{ stackConfig: invalidSnapshot }]);
+      const evaluateAdmission = vi.fn();
+      service = new CapacityPreflightService(
+        { evaluateAdmission } as never,
+        { current: () => ({ mode: "Hybrid" }) } as never,
+      );
+      await expect(service.admitDeployment(tx, deploymentSnapshot())).resolves.toMatchObject({
+        success: false, errorCode: "PlatformUnavailable",
+      });
+      expect(evaluateAdmission).not.toHaveBeenCalled();
+    });
+
+    it("admits a stopped GPU assignment with healthy evidence but denies stale evidence (#533)", async () => {
+      const GiB = 1_073_741_824n;
+      const candidate = deploymentSnapshot({ cpu: "4", memoryBytes: String(10n * GiB) });
+      candidate.singleApps = [
+        { ...candidate.singleApps[0], id: "running-source", desiredReplicas: 1 },
+        { ...candidate.singleApps[0], id: "stopped-destination", runtimeState: "Stopped", desiredReplicas: 1,
+          resources: { cpu: "5", memoryBytes: String(24n * GiB), gpu: 1 } },
+      ];
+      platform({ cpuNano: 10_000_000_000n, memoryBytes: 67_417_341_952n });
+      platform({ cpuNano: 10_000_000_000n, memoryBytes: 67_417_341_952n });
+      const occupied = [{ appGroupId: "other-group", version: 1,
+        status: DeploymentStatus.Succeeded, phase: DeploymentPhase.Completed,
+        stackConfig: serializedSnapshot(deploymentSnapshot({ id: "other-group", cpu: "1", memoryBytes: "60129542144" })),
+      }];
+      findDeployments.mockResolvedValueOnce(occupied).mockResolvedValueOnce([])
+        .mockResolvedValueOnce(occupied).mockResolvedValueOnce([]);
+      const evaluateAdmission = vi.fn().mockResolvedValueOnce({ usable: true, decision: { allowed: true } })
+        .mockResolvedValueOnce({ usable: false, reason: "fresh worker-published Hybrid admission telemetry is unavailable" });
+      service = new CapacityPreflightService({ evaluateAdmission } as never, { current: () => ({ mode: "Hybrid" }) } as never);
+      await expect(service.admitDeployment(tx, candidate)).resolves.toMatchObject({ success: true, demand: { memoryBytes: 10n * GiB } });
+      const stale = await service.admitDeployment(tx, candidate);
+      expect(stale).toMatchObject({ success: false, errorCode: "InsufficientCapacity" });
+      if (!stale.success) expect(stale.message).toContain("WorkerTelemetryUnavailableOrStale");
+    });
+
+    it.each(["healthy", "stale"] as const)("accounts for two unchanged stop-first services (#534, %s)", async evidence => {
+      const GiB = 1_073_741_824n;
+      platform({ cpuNano: 20_000_000_000n, memoryBytes: 67_417_341_952n });
+      const old = deploymentSnapshot({ cpu: "1", memoryBytes: String(2n * GiB) });
+      old.singleApps[0].id = "wrapper";
+      old.singleApps[0].name = "wrapper";
+      old.singleApps[0].updatePolicy = { order: "stop-first" };
+      old.singleApps.push({ ...old.singleApps[0], id: "browser", name: "browser" });
+      findLatestDeployment.mockResolvedValue({ stackConfig: serializedSnapshot(old) });
+      findDeployments.mockResolvedValueOnce([{
+        appGroupId: "other-group", version: 1, status: DeploymentStatus.Succeeded, phase: DeploymentPhase.Completed,
+        stackConfig: serializedSnapshot(deploymentSnapshot({ id: "other-group", cpu: "1", memoryBytes: String(60n * GiB) })),
+      }]);
+      const evaluateAdmission = vi.fn().mockResolvedValue(evidence === "healthy"
+        ? { usable: true, decision: { allowed: true } }
+        : { usable: false, reason: "fresh worker-published Hybrid admission telemetry is unavailable" });
+      service = new CapacityPreflightService({ evaluateAdmission } as never, { current: () => ({ mode: "Hybrid" }) } as never);
+      const result = await service.admitDeployment(tx, old);
+      expect(result.success).toBe(evidence === "healthy");
+      if (result.success) expect(result.demand.memoryBytes).toBe(4n * GiB);
+      else expect(result.message).toContain("WorkerTelemetryUnavailableOrStale");
+    });
 
     it("reports telemetry unavailable/stale reason without bypassing strict reservation limits", async () => {
       nearLimitReservation();
@@ -866,6 +1102,9 @@ describe("Stage 15 capacity preflight", () => {
       .mockResolvedValueOnce([{
         id: startedAppId,
         appGroupId: startedGroupId,
+        runtimeState: "Running",
+        pendingDeletion: false,
+        appGroup: { runtimeState: "Running" },
         memoryBytes: 10n * GiB,
         desiredReplicas: 10,
         actualReplicas: 0,
@@ -896,13 +1135,37 @@ describe("Stage 15 capacity preflight", () => {
 
     expect(evaluateAdmission).toHaveBeenCalledWith(
       expect.objectContaining({
-        runningApps: [{
+        runningApps: [expect.objectContaining({
           appId: startedAppId,
           hardLimitBytes: GiB,
           replicas: 1,
-        }],
+        })],
       }),
     );
+  });
+
+  it("removes recovered failed reservations from Hybrid in-flight accounting", async () => {
+    platform({ cpuNano: 20_000_000_000n, memoryBytes: 8192n });
+    const id = "other-group";
+    const row = (version: number, status: DeploymentStatus, memoryBytes: string) => ({
+      appGroupId: id, version, status, phase: DeploymentPhase.Completed,
+      stackConfig: serializedSnapshot(deploymentSnapshot({ id, cpu: "1", memoryBytes })),
+    });
+    const restored = row(1, DeploymentStatus.Succeeded, "2048");
+    const failed = row(2, DeploymentStatus.RollbackFailed, "8192");
+    const recovery = { ...row(3, DeploymentStatus.RolledBack, "8192"), rollbackTargetVersion: 1 };
+    findDeployments.mockResolvedValueOnce([restored, failed, recovery])
+      .mockResolvedValueOnce([failed]).mockResolvedValueOnce([recovery, restored]);
+    const evaluateAdmission = vi.fn().mockResolvedValue({
+      usable: true, decision: { allowed: true }, predictions: [],
+      requestedPredictedBytes: 0n, reason: "test",
+    });
+    service = new CapacityPreflightService(
+      { evaluateAdmission } as never,
+      { current: () => ({ mode: "Hybrid" }) } as never,
+    );
+    await expect(service.admitDeployment(tx, deploymentSnapshot({ cpu: "1" }))).resolves.toMatchObject({ success: true });
+    expect(evaluateAdmission).toHaveBeenCalledWith(expect.objectContaining({ inFlightSnapshots: [] }));
   });
 
 });

@@ -262,6 +262,8 @@ export type HybridNodeDecision = {
   requestedPredictedBytes: bigint;
   inFlightPredictedBytes: bigint;
   remainingAfterAdmissionBytes: bigint;
+  /** Additional predicted bytes admissible under this exact decision. */
+  deployableHeadroomBytes?: bigint;
 };
 
 export function evaluateHybridNodeAdmission(input: {
@@ -300,6 +302,7 @@ export function evaluateHybridNodeAdmission(input: {
       requestedPredictedBytes: input.requestedPredictedBytes,
       inFlightPredictedBytes: input.inFlightPredictedBytes,
       remainingAfterAdmissionBytes,
+      deployableHeadroomBytes: 0n,
     };
   }
   if ((input.recentOomEvents ?? 0n) > 0n && remainingAfterAdmissionBytes < safetyReserveBytes * 2n) {
@@ -314,8 +317,10 @@ export function evaluateHybridNodeAdmission(input: {
       requestedPredictedBytes: input.requestedPredictedBytes,
       inFlightPredictedBytes: input.inFlightPredictedBytes,
       remainingAfterAdmissionBytes,
+      deployableHeadroomBytes: 0n,
     };
   }
+  const effectiveReserve = (input.recentOomEvents ?? 0n) > 0n ? safetyReserveBytes * 2n : safetyReserveBytes;
   return {
     allowed: remainingAfterAdmissionBytes >= safetyReserveBytes,
     reason: remainingAfterAdmissionBytes >= safetyReserveBytes
@@ -329,5 +334,6 @@ export function evaluateHybridNodeAdmission(input: {
     requestedPredictedBytes: input.requestedPredictedBytes,
     inFlightPredictedBytes: input.inFlightPredictedBytes,
     remainingAfterAdmissionBytes,
+    deployableHeadroomBytes: remainingAfterAdmissionBytes > effectiveReserve ? remainingAfterAdmissionBytes - effectiveReserve : 0n,
   };
 }

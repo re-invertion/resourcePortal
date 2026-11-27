@@ -87,7 +87,7 @@ export function parseMeminfo(raw: string) {
     if (match) values.set(match[1], BigInt(match[2]) * 1024n);
   }
   const totalBytes = values.get("MemTotal");
-  const availableBytes = values.get("MemAvailable") ?? values.get("MemFree");
+  const availableBytes = values.get("MemAvailable");
   if (!totalBytes || availableBytes === undefined || availableBytes > totalBytes) {
     return null;
   }
@@ -412,6 +412,20 @@ export async function probeSwarmNodeCapacity(
     ) {
       return { status: "Unavailable", swarmNodeId: nodeId, reason: "ContainerIdentityChanged" };
     }
+  }
+
+  // Identity revalidation alone cannot detect newly started containers.
+  // Repeat the full labeled inventory, including the initially empty case.
+  const finalInventory = await runDocker(
+    ["ps", "--no-trunc", "--filter", "label=resourceportal.single-app-id",
+      "--format", '{{.ID}}\t{{.Label "resourceportal.single-app-id"}}'],
+    5_000,
+  );
+  const finalRows = finalInventory === null ? null : parseContainerRows(finalInventory);
+  const initialById = new Map(containerRows.map(row => [row.id, row.appId]));
+  if (!finalRows?.success || finalRows.rows.length !== containerRows.length ||
+      finalRows.rows.some(row => initialById.get(row.id) !== row.appId)) {
+    return { status: "Unavailable", swarmNodeId: nodeId, reason: "ContainerInventoryChanged" };
   }
 
   const pressure = parsePressure(pressureRaw);

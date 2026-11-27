@@ -189,6 +189,25 @@ describe("Hybrid capacity prediction", () => {
     expect(withParallel.allowed).toBe(false);
   });
 
+  it("reports #500 deployable budget rather than pre-growth headroom", () => {
+    const input = {
+      nodeMemoryTotalBytes: 63n * GiB,
+      nodeMemoryAvailableBytes: 45n * GiB,
+      currentAppMemoryBytes: 10n * GiB,
+      predictedExistingBytes: 27n * GiB,
+      requestedPredictedBytes: 0n,
+      inFlightPredictedBytes: 0n,
+    };
+    const baseline = evaluateHybridNodeAdmission(input);
+    expect(baseline.predictedExistingGrowthBytes).toBe(17n * GiB);
+    expect(baseline.deployableHeadroomBytes).toBe(28n * GiB - 63n * GiB / 5n);
+    expect(evaluateHybridNodeAdmission({...input, inFlightPredictedBytes: 2n * GiB}).deployableHeadroomBytes)
+      .toBe(26n * GiB - 63n * GiB / 5n);
+    expect(evaluateHybridNodeAdmission({...input, recentOomEvents: 1n}).deployableHeadroomBytes)
+      .toBe(28n * GiB - 2n * (63n * GiB / 5n));
+    expect(evaluateHybridNodeAdmission({...input, memoryPsiSomeAvg10: 12}).deployableHeadroomBytes).toBe(0n);
+  });
+
   it("tightens admission after OOM events", () => {
     const decision = evaluateHybridNodeAdmission({
       nodeMemoryTotalBytes: 32n * GiB,

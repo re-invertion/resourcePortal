@@ -106,7 +106,10 @@ export class SwarmCapacityNodeProbeRouter {
       unique.map(async (address) => {
         if (!/^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(address)) return null;
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 12_000);
+        // The probe executes bounded info, inventory, two inspect batches
+        // and a final inventory. Allow their combined deadlines plus bounded
+        // filesystem sampling; still fail closed on an unreachable agent.
+        const timeout = setTimeout(() => controller.abort(), 35_000);
         try {
           const response = await fetch(
             "http://" + address + ":3102/internal/capacity-probe",

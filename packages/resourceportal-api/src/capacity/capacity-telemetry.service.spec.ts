@@ -98,6 +98,7 @@ function snapshot(
     singleApps: [
       {
         id: appId,
+        name: appId,
         runtimeState: "Running",
         desiredReplicas,
         resources: {
@@ -118,6 +119,7 @@ function appEvidence(
 ) {
   return {
     appId,
+    generation: "test-generation",
     replicas,
     hardLimitBytes: (BigInt(hardGiB) * GiB).toString(),
     predictedBytes: (BigInt(predictedGiB) * GiB).toString(),
@@ -265,6 +267,108 @@ describe("Hybrid admission from worker-published telemetry", () => {
     expect(result.reason).toContain("does not cover every schedulable");
   });
 
+  it.each([0, 120_000])("evaluates stopped GPU assignment without charging stopped replicas (#533, age=%s)", async age => {
+    const { telemetry } = admissionService(
+      [{ ...report(nodeA, 44, 5), memoryTotalBytes: "67417341952" }],
+      [appEvidence("existing-app", 1, 10, 5)], age,
+    );
+    const candidate = snapshot(10, "existing-app");
+    const result = await telemetry.evaluateAdmission({
+      snapshot: { ...candidate, singleApps: [
+        { ...candidate.singleApps[0], updatePolicy: { order: "stop-first" } },
+        { ...snapshot(24, "hermes").singleApps[0], runtimeState: "Stopped",
+          resources: { cpu: "5", memoryBytes: String(24n * GiB), gpu: 1 } },
+      ] } as never,
+      runningApps: [{ appId: "existing-app", serviceName: "existing-app", reverseStopFirst: true, generation: "test-generation", hardLimitBytes: 10n * GiB, replicas: 1 }],
+      inFlightSnapshots: [], schedulableNodeIds: [nodeA],
+    });
+    expect(result.usable).toBe(age === 0);
+    if (result.usable) {
+      expect(result.requestedPredictedBytes).toBe(0n);
+      expect(result.decision.allowed).toBe(true);
+    } else expect(result.reason).toContain("fresh worker-published");
+  });
+
+  it.each(["stop-first", "start-first"] as const)("accounts two existing 2 GiB services in an image rollout (#534, %s)", async order => {
+    const { telemetry } = admissionService(
+      [{ ...report(nodeA, 44, 2), memoryTotalBytes: "67417341952" }],
+      [appEvidence("wrapper", 1, 2, 1), appEvidence("browser", 1, 2, 1)],
+    );
+    const candidate = snapshot(2, "wrapper");
+    const result = await telemetry.evaluateAdmission({
+      snapshot: { ...candidate, singleApps: ["wrapper", "browser"].map(id => ({
+        ...candidate.singleApps[0], id, name: id, updatePolicy: { order, parallelism: 1 },
+      })) } as never,
+      runningApps: ["wrapper", "browser"].map(appId => ({ appId, serviceName: appId, reverseStopFirst: true, generation: "test-generation", hardLimitBytes: 2n * GiB, replicas: 1 })),
+      inFlightSnapshots: [], schedulableNodeIds: [nodeA],
+    });
+    expect(result.usable).toBe(true);
+    if (!result.usable) return;
+    expect(result.requestedPredictedBytes).toBe(order === "stop-first" ? 0n : 4n * GiB);
+    expect(result.decision.allowed).toBe(true);
+  });
+
+  it.each(["rename", "reverse-start-first"] as const)("reserves overlap for %s in candidate and in-flight", async scenario => {
+    const { telemetry } = admissionService([report(nodeA, 24, 1)], [appEvidence()]);
+    const candidate = snapshot(2, "existing-app");
+    if (scenario === "rename") candidate.singleApps[0].name = "renamed";
+    const result = await telemetry.evaluateAdmission({
+      snapshot: candidate as never,
+      runningApps: [{ appId: "existing-app", serviceName: "existing-app", reverseStopFirst: scenario !== "reverse-start-first", generation: "test-generation", hardLimitBytes: 2n * GiB, replicas: 1 }],
+      inFlightSnapshots: [candidate as never], schedulableNodeIds: [nodeA],
+    });
+    expect(result.usable).toBe(true);
+    if (!result.usable) return;
+    expect(result.requestedPredictedBytes).toBe(3n * GiB);
+    expect(result.decision.inFlightPredictedBytes).toBe(3n * GiB);
+  });
+
+  it.each([2, 4])("retains growth after success with prior-generation evidence and %s GiB limit", async hardGiB => {
+    const { telemetry } = admissionService([report(nodeA, 24, 1)], [appEvidence()]);
+    const result = await telemetry.evaluateAdmission({
+      snapshot: snapshot(1) as never,
+      runningApps: [{ appId: "existing-app", serviceName: "existing-app", reverseStopFirst: true, generation: "next-generation", hardLimitBytes: BigInt(hardGiB) * GiB, replicas: 1 }],
+      inFlightSnapshots: [], schedulableNodeIds: [nodeA],
+    });
+    expect(result.usable).toBe(true);
+    if (!result.usable) return;
+    expect(result.decision.predictedExistingGrowthBytes).toBe(BigInt(hardGiB - 1) * GiB);
+  });
+
+  it("reserves restoration of stopped or removed apps for candidate and concurrent rollback", async () => {
+    const { telemetry } = admissionService([report(nodeA, 24, 0)], []);
+    const previous = snapshot(4, "removed-app");
+    const target = { ...previous, singleApps: [] };
+    const result = await telemetry.evaluateAdmission({
+      snapshot: target,
+      rollbackSnapshot: previous as never,
+      runningApps: [],
+      inFlightSnapshots: [{ ...target, rollbackSnapshot: previous } as never],
+      schedulableNodeIds: [nodeA],
+    });
+    expect(result.usable).toBe(true);
+    if (!result.usable) return;
+    expect(result.requestedPredictedBytes).toBe(4n * GiB);
+    expect(result.decision.inFlightPredictedBytes).toBe(4n * GiB);
+  });
+
+  it.each(["removed", "stopped"])("retains the rollback hard-limit gap for a %s live workload", async state => {
+    const { telemetry } = admissionService([report(nodeA, 24, 1)], [appEvidence("existing-app", 1, 4, 1)]);
+    const previous = snapshot(4, "existing-app");
+    const target = { ...previous, singleApps: state === "removed" ? [] : [{ ...previous.singleApps[0], runtimeState: "Stopped" }] };
+    const result = await telemetry.evaluateAdmission({
+      snapshot: target as never,
+      rollbackSnapshot: previous as never,
+      runningApps: [{ appId: "existing-app", serviceName: "existing-app", reverseStopFirst: true, generation: "test-generation", hardLimitBytes: 4n * GiB, replicas: 1 }],
+      inFlightSnapshots: [{ ...target, rollbackSnapshot: previous } as never],
+      schedulableNodeIds: [nodeA],
+    });
+    expect(result.usable).toBe(true);
+    if (!result.usable) return;
+    expect(result.requestedPredictedBytes).toBe(3n * GiB);
+    expect(result.decision.inFlightPredictedBytes).toBe(3n * GiB);
+  });
+
   it("falls back when the worker-published snapshot is stale", async () => {
     const { telemetry } = admissionService(
       [report(nodeA, 20, 5)],
@@ -310,6 +414,7 @@ describe("Hybrid admission from worker-published telemetry", () => {
       runningApps: [
         {
           appId: "existing-app",
+          serviceName: "existing-app", reverseStopFirst: true, generation: "test-generation",
           hardLimitBytes: 2n * GiB,
           replicas: 1,
         },
@@ -333,6 +438,7 @@ describe("Hybrid admission from worker-published telemetry", () => {
       runningApps: [
         {
           appId: "existing-app",
+          serviceName: "existing-app", reverseStopFirst: true, generation: "test-generation",
           hardLimitBytes: 12n * GiB,
           replicas: 6,
         },
@@ -342,10 +448,55 @@ describe("Hybrid admission from worker-published telemetry", () => {
     });
     expect(result.usable).toBe(true);
     if (!result.usable) return;
-    expect(result.decision.predictedExistingGrowthBytes).toBe(5n * GiB);
+    expect(result.decision.predictedExistingGrowthBytes).toBe(11n * GiB);
   });
 
-  it("does not reserve hard-limit growth twice when replica count is unchanged", async () => {
+  it("reserves additional hard-limit RAM for the start-first replacement batch", async () => {
+    const { telemetry } = admissionService(
+      [report(nodeA, 24, 1)],
+      [appEvidence("existing-app", 1, 2, 1)],
+    );
+    const candidate = snapshot(2, "existing-app");
+    const result = await telemetry.evaluateAdmission({
+      snapshot: {
+        ...candidate,
+        singleApps: candidate.singleApps.map(app => ({
+          ...app, updatePolicy: { order: "start-first", parallelism: 1 },
+        })),
+      } as never,
+      runningApps: [{ appId: "existing-app", serviceName: "existing-app", reverseStopFirst: true, generation: "test-generation", hardLimitBytes: 2n * GiB, replicas: 1 }],
+      inFlightSnapshots: [],
+      schedulableNodeIds: [nodeA],
+    });
+    expect(result.usable).toBe(true);
+    if (!result.usable) return;
+    expect(result.requestedPredictedBytes).toBe(2n * GiB);
+  });
+
+  it("does not reserve a replacement batch for a runtime start", async () => {
+    const { telemetry } = admissionService(
+      [report(nodeA, 24, 1)],
+      [appEvidence("existing-app", 1, 2, 1)],
+    );
+    const candidate = snapshot(2, "existing-app");
+    const result = await telemetry.evaluateAdmission({
+      snapshot: {
+        ...candidate,
+        singleApps: candidate.singleApps.map(app => ({
+          ...app, updatePolicy: { order: "start-first", parallelism: 1 },
+        })),
+      } as never,
+      runtimeStart: true,
+      runningApps: [{ appId: "existing-app", serviceName: "existing-app", reverseStopFirst: true, generation: "test-generation", hardLimitBytes: 2n * GiB, replicas: 1 }],
+      inFlightSnapshots: [],
+      schedulableNodeIds: [nodeA],
+    });
+    expect(result.usable).toBe(true);
+    if (!result.usable) return;
+    expect(result.requestedPredictedBytes).toBe(0n);
+  });
+
+  it("reserves newly enabled hard-limit growth when replica count is unchanged", async () => {
     const { telemetry } = admissionService(
       [report(nodeA, 16, 1)],
       [appEvidence("existing-app", 1, 2, 1)],
@@ -355,6 +506,7 @@ describe("Hybrid admission from worker-published telemetry", () => {
       runningApps: [
         {
           appId: "existing-app",
+          serviceName: "existing-app", reverseStopFirst: true, generation: "test-generation",
           hardLimitBytes: 2n * GiB,
           replicas: 1,
         },
@@ -364,7 +516,7 @@ describe("Hybrid admission from worker-published telemetry", () => {
     });
     expect(result.usable).toBe(true);
     if (!result.usable) return;
-    expect(result.requestedPredictedBytes).toBe(0n);
+    expect(result.requestedPredictedBytes).toBe(2n * GiB);
     expect(result.decision.allowed).toBe(true);
   });
 });
@@ -374,6 +526,30 @@ describe("worker collection completeness", () => {
     get: (key: string, fallback?: unknown) =>
       key === "WORKER_ID" ? "worker-1" : fallback,
   };
+
+  it("rejects a complete census that expires during collection", async () => {
+    const store = new MemoryStore();
+    const policy = new CapacityPolicyService(config as never);
+    policy.set({ maxTelemetryAgeSeconds: 30 });
+    const prisma = {
+      singleApp: { findMany: vi.fn().mockResolvedValue([{ id: "existing-app", actualReplicas: 1 }]) },
+      remoteLocation: { findMany: vi.fn().mockResolvedValue([{ swarmNodeId: nodeA }]) },
+    };
+    vi.useFakeTimers();
+    try {
+      const nodeProbe = {
+        collect: vi.fn(async () => {
+          await vi.advanceTimersByTimeAsync(30_001);
+          return [report(nodeA, 20, 1)];
+        }),
+      };
+      const telemetry = new CapacityTelemetryService(store as never, policy, prisma as never, nodeProbe as never);
+      await expect(telemetry.observeNow()).rejects.toThrow("expired during collection");
+      expect(store.points).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it("does not append partial app telemetry when a schedulable node is missing", async () => {
     const store = new MemoryStore();
@@ -504,7 +680,7 @@ describe("worker collection completeness", () => {
     );
     const reconciler = new CapacityTelemetryReconcilerService(telemetry, config as never);
     await reconciler.collect(true);
-    expect(upsert).toHaveBeenCalledOnce();
+    expect(upsert).toHaveBeenCalledTimes(2);
     expect(upsert.mock.calls[0]?.[0].create).toMatchObject({
       lastResult: {
         unavailable: true,
@@ -515,6 +691,36 @@ describe("worker collection completeness", () => {
       failureCount: 1,
     });
     expect(JSON.stringify(upsert.mock.calls[0]?.[0])).not.toContain("existing-app");
+  });
+
+  it("invalidates evidence then retries a transient replica mismatch with a complete fresh probe", async () => {
+    const store = new MemoryStore();
+    const prisma = {
+      singleApp: { findMany: vi.fn().mockResolvedValue([{ id: "existing-app", actualReplicas: 2 }]) },
+      remoteLocation: { findMany: vi.fn().mockResolvedValue([{ swarmNodeId: nodeA }]) },
+      workerReconciliationState: { findFirst: vi.fn().mockResolvedValue(null), upsert: vi.fn().mockResolvedValue({}) },
+    };
+    const nodeProbe = { collect: vi.fn()
+      .mockResolvedValueOnce([report(nodeA, 20, 1)])
+      .mockResolvedValueOnce([{
+        ...report(nodeA, 20, 1),
+        containers: [
+          ...report(nodeA, 20, 1).containers,
+          ...report(nodeB, 20, 1).containers.map(container => ({ ...container, id: "bbbbbbbbbbbb" })),
+        ],
+      }]) };
+    const telemetry = new CapacityTelemetryService(
+      store as never, new CapacityPolicyService(config as never),
+      prisma as never, nodeProbe as never,
+    );
+    const publish = vi.spyOn(telemetry, "publishDiagnostics").mockResolvedValue({} as never);
+    await new CapacityTelemetryReconcilerService(telemetry, config as never).collect(true);
+    expect(nodeProbe.collect).toHaveBeenCalledTimes(2);
+    expect(prisma.workerReconciliationState.upsert).toHaveBeenCalledOnce();
+    expect(publish).toHaveBeenCalledOnce();
+    expect(prisma.workerReconciliationState.upsert.mock.invocationCallOrder[0])
+      .toBeLessThan(publish.mock.invocationCallOrder[0]);
+    expect(store.points.find(point => point.appId === "existing-app")?.replicaCount).toBe(2);
   });
 
   it("invalidates fresh published evidence immediately when a whole node probe is missing", async () => {
@@ -587,6 +793,7 @@ describe("worker collection completeness", () => {
       runningApps: [
         {
           appId: "existing-app",
+          serviceName: "existing-app", reverseStopFirst: true, generation: "test-generation",
           hardLimitBytes: 4n * GiB,
           replicas: 2,
         },
@@ -618,7 +825,7 @@ describe("capacity policy validation", () => {
 });
 
 describe("worker admission evidence publication", () => {
-  it("publishes JSON-safe per-node and per-app evidence for API admission", async () => {
+  it.each([[false, false], [true, false], [false, true], [true, true]])("publishes deployed limits only after generation completion (pre-success=%s, rolled-back=%s)", async (preSuccess, rolledBack) => {
     const store = new MemoryStore();
     const now = new Date().toISOString();
     store.points.push(
@@ -660,14 +867,24 @@ describe("worker admission evidence publication", () => {
             {
               id: "existing-app",
               name: "Existing",
-              memoryBytes: 2n * GiB,
+              memoryBytes: 1n * GiB,
+              appGroupId: "group-deployed",
               actualReplicas: 1,
               desiredReplicas: 1,
             },
           ]),
       },
       appGroupDeployment: {
-        findMany: () => Promise.resolve([]),
+        findMany: (query: { where: { status: { in: string[] } } }) => Promise.resolve(query.where.status.in.includes("Succeeded") ? [...(rolledBack ? [{
+          appGroupId: "group-deployed", version: 2, status: "RolledBack", rollbackTargetVersion: 1,
+          completedAt: new Date(Date.parse(now) + (preSuccess ? 1000 : -30_000)),
+          stackConfig: JSON.stringify({ appGroup: { id: "group-deployed" }, singleApps: [{ id: "existing-app", resources: { memoryBytes: (8n * GiB).toString() } }] }),
+        }] : []), {
+          appGroupId: "group-deployed",
+          version: 1, status: "Succeeded",
+          completedAt: new Date(Date.parse(now) + (!rolledBack && preSuccess ? 1000 : -60_000)),
+          stackConfig: JSON.stringify({ appGroup: { id: "group-deployed" }, singleApps: [{ id: "existing-app", resources: { memoryBytes: (2n * GiB).toString() } }] }),
+        }] : []),
       },
       workerReconciliationState: {
         upsert,
@@ -695,10 +912,11 @@ describe("worker admission evidence publication", () => {
           memoryTotalBytes: (32n * GiB).toString(),
         },
       ],
-      apps: [
+      apps: preSuccess ? [] : [
         {
           appId: "existing-app",
           replicas: 1,
+          generation: `group-deployed:${rolledBack ? 2 : 1}:${new Date(Date.parse(now) - (rolledBack ? 30_000 : 60_000)).toISOString()}`,
           hardLimitBytes: (2n * GiB).toString(),
         },
       ],
@@ -707,6 +925,7 @@ describe("worker admission evidence publication", () => {
   });
 
   it("publishes the replica count validated with the memory sample even if the database advances before publication", async () => {
+    const completedAt = new Date(Date.now() - 60_000);
     const store = new MemoryStore();
     const config = {
       get: (_key: string, fallback?: unknown) => fallback,
@@ -718,6 +937,7 @@ describe("worker admission evidence publication", () => {
         {
           id: "existing-app",
           name: "Existing",
+          appGroupId: "group-deployed",
           memoryBytes: 2n * GiB,
           actualReplicas: 1,
           desiredReplicas: 1,
@@ -727,6 +947,7 @@ describe("worker admission evidence publication", () => {
         {
           id: "existing-app",
           name: "Existing",
+          appGroupId: "group-deployed",
           memoryBytes: 2n * GiB,
           actualReplicas: 6,
           desiredReplicas: 6,
@@ -739,7 +960,10 @@ describe("worker admission evidence publication", () => {
         findMany: () => Promise.resolve([{ swarmNodeId: nodeA }]),
       },
       appGroupDeployment: {
-        findMany: () => Promise.resolve([]),
+        findMany: (query: { where: { status: { in: string[] } } }) => Promise.resolve(query.where.status.in.includes("Succeeded") ? [{
+          appGroupId: "group-deployed", version: 1, status: "Succeeded", completedAt,
+          stackConfig: JSON.stringify({ appGroup: { id: "group-deployed" }, singleApps: [{ id: "existing-app", resources: { memoryBytes: (2n * GiB).toString() } }] }),
+        }] : []),
       },
       workerReconciliationState: {
         upsert,
