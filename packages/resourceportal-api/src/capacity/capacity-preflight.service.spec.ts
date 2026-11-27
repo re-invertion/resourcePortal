@@ -92,7 +92,7 @@ describe("Stage 15 capacity preflight", () => {
   it("filters both CPU and memory supply to the same schedulable inventory", async () => {
     platform();
     await service.admitDeployment(tx, deploymentSnapshot());
-    const sql = queryRaw.mock.calls[1][0].sql as string;
+    const sql = (queryRaw.mock.calls[1][0] as Prisma.Sql).sql;
     for (const resource of ["availableCpuNano", "availableMemoryBytes"]) {
       const start = sql.indexOf('SUM(r."' + resource + '") FILTER');
       expect(start).toBeGreaterThanOrEqual(0);
