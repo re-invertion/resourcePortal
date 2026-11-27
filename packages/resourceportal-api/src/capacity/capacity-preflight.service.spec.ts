@@ -716,7 +716,6 @@ describe("Stage 15 capacity preflight", () => {
     });
 
     it("admits a stopped GPU assignment with healthy evidence but denies stale evidence (#533)", async () => {
-      nearLimitReservation();
       const GiB = 1_073_741_824n;
       const candidate = deploymentSnapshot({ cpu: "4", memoryBytes: String(10n * GiB) });
       candidate.singleApps = [
@@ -725,10 +724,13 @@ describe("Stage 15 capacity preflight", () => {
           resources: { cpu: "5", memoryBytes: String(24n * GiB), gpu: 1 } },
       ];
       platform({ cpuNano: 10_000_000_000n, memoryBytes: 67_417_341_952n });
-      findDeployments.mockResolvedValue([{ appGroupId: "other-group", version: 1,
+      platform({ cpuNano: 10_000_000_000n, memoryBytes: 67_417_341_952n });
+      const occupied = [{ appGroupId: "other-group", version: 1,
         status: DeploymentStatus.Succeeded, phase: DeploymentPhase.Completed,
         stackConfig: serializedSnapshot(deploymentSnapshot({ id: "other-group", cpu: "1", memoryBytes: "60129542144" })),
-      }]);
+      }];
+      findDeployments.mockResolvedValueOnce(occupied).mockResolvedValueOnce([])
+        .mockResolvedValueOnce(occupied).mockResolvedValueOnce([]);
       const evaluateAdmission = vi.fn().mockResolvedValueOnce({ usable: true, decision: { allowed: true } })
         .mockResolvedValueOnce({ usable: false, reason: "fresh worker-published Hybrid admission telemetry is unavailable" });
       service = new CapacityPreflightService({ evaluateAdmission } as never, { current: () => ({ mode: "Hybrid" }) } as never);
