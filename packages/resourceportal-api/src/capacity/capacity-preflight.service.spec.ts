@@ -651,7 +651,7 @@ describe("Stage 15 capacity preflight", () => {
 
   describe("Hybrid deployable budget (#500)", () => {
     it("returns no budget when telemetry is stale", async () => {
-      platform();
+      queryRaw.mockResolvedValueOnce([{ health: "Healthy", availableCpuNano: 4_000_000_000n, availableMemoryBytes: 8_192n, schedulableNodeCount: 1n, schedulableNodeIds: ["ku2gbq2sm1b2khra543dtyxfg"] }]);
       const evaluateAdmission = vi.fn().mockResolvedValue({ usable: false, reason: "fresh worker-published Hybrid admission telemetry is unavailable" });
       service = new CapacityPreflightService(
         { evaluateAdmission } as never,
@@ -662,7 +662,7 @@ describe("Stage 15 capacity preflight", () => {
     });
 
     it("serializes the limiting-node budget after growth and in-flight demand", async () => {
-      platform();
+      queryRaw.mockResolvedValueOnce([{ health: "Healthy", availableCpuNano: 4_000_000_000n, availableMemoryBytes: 8_192n, schedulableNodeCount: 1n, schedulableNodeIds: ["ku2gbq2sm1b2khra543dtyxfg"] }]);
       const GiB = 1_073_741_824n;
       const evaluateAdmission = vi.fn().mockResolvedValue({ usable: true, decision: {
         deployableHeadroomBytes: 15n * GiB,
