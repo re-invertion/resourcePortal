@@ -251,6 +251,29 @@ describe("Stage 15 capacity preflight", () => {
     await expect(service.admitDeployment(tx, deploymentSnapshot({ cpu: "1", memoryBytes: "1024" }))).resolves.toMatchObject({ success: false, errorCode: "InsufficientCapacity" });
   });
 
+  it("retains all unresolved failed rollback versions until a newer success", async () => {
+    platform({ cpuNano: 20_000_000_000n, memoryBytes: 7_168n });
+    const id = "other-group";
+    const row = (version: number, status: DeploymentStatus, memoryBytes: string) => ({
+      appGroupId: id, version, status, phase: DeploymentPhase.Completed,
+      stackConfig: serializedSnapshot(deploymentSnapshot({ id, cpu: "1", memoryBytes })),
+    });
+    findDeployments.mockResolvedValue([
+      row(1, DeploymentStatus.Succeeded, "2048"),
+      row(2, DeploymentStatus.RollbackFailed, "2048"),
+      row(3, DeploymentStatus.RollbackFailed, "2048"),
+    ]);
+    await expect(service.admitDeployment(tx, deploymentSnapshot({ cpu: "1", memoryBytes: "2048" }))).resolves.toMatchObject({ success: false, errorCode: "InsufficientCapacity" });
+    platform({ cpuNano: 20_000_000_000n, memoryBytes: 7_168n });
+    findDeployments.mockResolvedValue([
+      row(1, DeploymentStatus.Succeeded, "2048"),
+      row(2, DeploymentStatus.RollbackFailed, "2048"),
+      row(3, DeploymentStatus.RollbackFailed, "2048"),
+      row(4, DeploymentStatus.Succeeded, "2048"),
+    ]);
+    await expect(service.admitDeployment(tx, deploymentSnapshot({ cpu: "1", memoryBytes: "2048" }))).resolves.toMatchObject({ success: true, occupied: { memoryBytes: 2048n } });
+  });
+
   it("does not reserve capacity for another deployment still in Validating", async () => {
     platform({ cpuNano: 3_000_000_000n });
     const otherAppGroupId = "00000000-0000-0000-0000-000000000103";
