@@ -843,6 +843,8 @@ describe("worker admission evidence publication", () => {
       appGroupDeployment: {
         findMany: (query: { where: { status: string } }) => Promise.resolve(query.where.status === "Succeeded" ? [{
           appGroupId: "group-deployed",
+          version: 1,
+          completedAt: new Date(Date.parse(now) - 60_000),
           stackConfig: JSON.stringify({ appGroup: { id: "group-deployed" }, singleApps: [{ id: "existing-app", resources: { memoryBytes: (2n * GiB).toString() } }] }),
         }] : []),
       },
@@ -884,6 +886,7 @@ describe("worker admission evidence publication", () => {
   });
 
   it("publishes the replica count validated with the memory sample even if the database advances before publication", async () => {
+    const completedAt = new Date(Date.now() - 60_000);
     const store = new MemoryStore();
     const config = {
       get: (_key: string, fallback?: unknown) => fallback,
@@ -895,6 +898,7 @@ describe("worker admission evidence publication", () => {
         {
           id: "existing-app",
           name: "Existing",
+          appGroupId: "group-deployed",
           memoryBytes: 2n * GiB,
           actualReplicas: 1,
           desiredReplicas: 1,
@@ -904,6 +908,7 @@ describe("worker admission evidence publication", () => {
         {
           id: "existing-app",
           name: "Existing",
+          appGroupId: "group-deployed",
           memoryBytes: 2n * GiB,
           actualReplicas: 6,
           desiredReplicas: 6,
@@ -916,7 +921,10 @@ describe("worker admission evidence publication", () => {
         findMany: () => Promise.resolve([{ swarmNodeId: nodeA }]),
       },
       appGroupDeployment: {
-        findMany: () => Promise.resolve([]),
+        findMany: (query: { where: { status: unknown } }) => Promise.resolve(query.where.status === "Succeeded" ? [{
+          appGroupId: "group-deployed", version: 1, completedAt,
+          stackConfig: JSON.stringify({ appGroup: { id: "group-deployed" }, singleApps: [{ id: "existing-app", resources: { memoryBytes: (2n * GiB).toString() } }] }),
+        }] : []),
       },
       workerReconciliationState: {
         upsert,
