@@ -649,6 +649,40 @@ describe("Stage 15 capacity preflight", () => {
       });
   });
 
+  describe("Hybrid deployable budget (#500)", () => {
+    it("returns no budget when telemetry is stale", async () => {
+      platform();
+      const evaluateAdmission = vi.fn().mockResolvedValue({ usable: false, reason: "fresh worker-published Hybrid admission telemetry is unavailable" });
+      service = new CapacityPreflightService(
+        { evaluateAdmission } as never,
+        { current: () => ({ mode: "Hybrid" }) } as never,
+      );
+      await expect(service.hybridBudget(tx)).resolves.toBeNull();
+      expect(evaluateAdmission).toHaveBeenCalledOnce();
+    });
+
+    it("serializes the limiting-node budget after growth and in-flight demand", async () => {
+      platform();
+      const GiB = 1_073_741_824n;
+      const evaluateAdmission = vi.fn().mockResolvedValue({ usable: true, decision: {
+        deployableHeadroomBytes: 15n * GiB,
+        predictedExistingGrowthBytes: 16n * GiB,
+        inFlightPredictedBytes: GiB,
+        allowed: true, reason: "test",
+      } });
+      service = new CapacityPreflightService(
+        { evaluateAdmission } as never,
+        { current: () => ({ mode: "Hybrid" }) } as never,
+      );
+      await expect(service.hybridBudget(tx)).resolves.toMatchObject({
+        deployableHeadroomBytes: (15n * GiB).toString(),
+        predictedExistingGrowthBytes: (16n * GiB).toString(),
+        inFlightPredictedBytes: GiB.toString(),
+        allowed: true,
+      });
+    });
+  });
+
   describe("Hybrid strict-fallback diagnostics (#409)", () => {
     function nearLimitReservation() {
       platform({ cpuNano: 10_000_000_000n, memoryBytes: 8_192n });
