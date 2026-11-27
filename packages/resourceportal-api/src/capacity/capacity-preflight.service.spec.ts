@@ -914,8 +914,8 @@ describe("Stage 15 capacity preflight", () => {
     };
     findDeployments
       .mockResolvedValueOnce([deployed])
-      .mockResolvedValueOnce([deployed])
-      .mockResolvedValueOnce([]);
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([deployed]);
     findAppGroup.mockResolvedValue({ runtimeState: "Running" });
     findSingleApps
       .mockResolvedValueOnce([{
