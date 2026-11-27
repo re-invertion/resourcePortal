@@ -747,44 +747,38 @@ export class CapacityPreflightService {
 
     let occupied: CapacityDemand = { cpuNano: 0n, memoryBytes: 0n };
     for (const rows of byAppGroup.values()) {
-      const active = rows
-        .filter(
-          (row) =>
-            row.status === DeploymentStatus.RollbackFailed ||
-            ((row.status === DeploymentStatus.Deploying || row.status === DeploymentStatus.RollingBack) &&
-            ADMITTED_PHASES.has(row.phase)),
-        )
-        .sort((a, b) => b.version - a.version)[0];
       const succeeded = rows
-        .filter((row) => row.status === DeploymentStatus.Succeeded)
+        .filter(row => row.status === DeploymentStatus.Succeeded)
         .sort((a, b) => b.version - a.version)[0];
-      const selected = active && (!succeeded || active.version > succeeded.version) ? active : succeeded;
-      if (!selected) {
-        continue;
-      }
-
-      const parsed = this.parseSnapshot(selected.stackConfig);
-      if (!parsed) {
+      const active = rows.filter(row =>
+        (!succeeded || row.version > succeeded.version) &&
+        (row.status === DeploymentStatus.RollbackFailed ||
+          ((row.status === DeploymentStatus.Deploying || row.status === DeploymentStatus.RollingBack) &&
+            ADMITTED_PHASES.has(row.phase))),
+      );
+      let demand: CapacityDemand = { cpuNano: 0n, memoryBytes: 0n };
+      const previous = succeeded ? this.parseSnapshot(succeeded.stackConfig) : null;
+      if (succeeded && !previous) {
         return this.platformUnavailable(
-          `Cannot account deployment capacity for AppGroup ${selected.appGroupId}`,
+          `Cannot account previous capacity for AppGroup ${succeeded.appGroupId}`,
         );
       }
-      let demand = selected === active
-        ? snapshotDemand(parsed)
-        : await this.succeededRuntimeDemand(tx, parsed);
-      if (selected === active && succeeded) {
-        // The preceding successful stack can remain live during a rollout.
-        // Do not release its CPU/RAM reservation merely because a smaller
-        // draft has entered PreparingArtifacts. Retain each resource high-water
-        // mark until the new deployment has actually succeeded.
-        const previous = this.parseSnapshot(succeeded.stackConfig);
-        if (!previous) {
+      if (previous) demand = await this.succeededRuntimeDemand(tx, previous);
+      for (const row of active) {
+        const parsed = this.parseSnapshot(row.stackConfig);
+        if (!parsed) {
           return this.platformUnavailable(
-            `Cannot account previous capacity for AppGroup ${succeeded.appGroupId}`,
+            `Cannot account deployment capacity for AppGroup ${row.appGroupId}`,
           );
         }
-        const oldDemand = await this.succeededRuntimeDemand(tx, previous);
-        demand = this.rolloutReservation(parsed, demand, previous, oldDemand);
+        const target = snapshotDemand(parsed);
+        // Multiple unresolved attempts may leave distinct service identities
+        // live. Only a single ordered replacement may credit the baseline.
+        if (active.length === 1 && previous && row.status !== DeploymentStatus.RollbackFailed) {
+          demand = this.rolloutReservation(parsed, target, previous, demand);
+        } else {
+          demand = { cpuNano: demand.cpuNano + target.cpuNano, memoryBytes: demand.memoryBytes + target.memoryBytes };
+        }
       }
       occupied = {
         cpuNano: occupied.cpuNano + demand.cpuNano,
