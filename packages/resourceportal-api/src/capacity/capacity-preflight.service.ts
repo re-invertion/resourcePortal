@@ -16,7 +16,7 @@ import { CapacityTelemetryService } from "./capacity-telemetry.service";
 const CAPACITY_LOCK_NAMESPACE = "resourceportal:capacity:swarm";
 const SWARM_CLUSTER_SINGLETON_ID = "00000000-0000-0000-0000-000000000013";
 
-const POSSIBLY_APPLIED_PHASES = [DeploymentPhase.ApplyingStack, DeploymentPhase.WaitingForRollout, DeploymentPhase.RollingBack, DeploymentPhase.Cleanup, DeploymentPhase.Completed];
+const POSSIBLY_APPLIED_PHASES: DeploymentPhase[] = [DeploymentPhase.ApplyingStack, DeploymentPhase.WaitingForRollout, DeploymentPhase.RollingBack, DeploymentPhase.Cleanup, DeploymentPhase.Completed];
 
 const ADMITTED_PHASES = new Set<DeploymentPhase>([
   DeploymentPhase.PreparingArtifacts,
