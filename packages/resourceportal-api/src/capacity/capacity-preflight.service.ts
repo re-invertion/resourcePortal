@@ -580,9 +580,16 @@ export class CapacityPreflightService {
           { status: DeploymentStatus.RollbackFailed },
         ],
       },
-      select: { stackConfig: true },
+      select: { stackConfig: true, appGroupId: true, version: true, status: true },
     });
-    const snapshots = rows.map((row) => this.parseSnapshot(row.stackConfig));
+    const failed = rows.filter(row => row.status === DeploymentStatus.RollbackFailed);
+    const latestSucceeded = failed.length ? await tx.appGroupDeployment.findMany({
+      where: { appGroupId: { in: failed.map(row => row.appGroupId) }, status: DeploymentStatus.Succeeded },
+      select: { appGroupId: true, version: true },
+    }) : [];
+    const snapshots = rows.filter(row => row.status !== DeploymentStatus.RollbackFailed ||
+      !latestSucceeded.some(success => success.appGroupId === row.appGroupId && success.version > row.version)
+    ).map((row) => this.parseSnapshot(row.stackConfig));
     if (snapshots.some(row => row === null)) return null;
     return snapshots.filter((row): row is CapacityDeploymentSnapshot => row !== null);
   }
