@@ -340,7 +340,7 @@ describe("Hybrid admission from worker-published telemetry", () => {
     const previous = snapshot(4, "removed-app");
     const target = { ...previous, singleApps: [] };
     const result = await telemetry.evaluateAdmission({
-      snapshot: target as never,
+      snapshot: target,
       rollbackSnapshot: previous as never,
       runningApps: [],
       inFlightSnapshots: [{ ...target, rollbackSnapshot: previous } as never],
