@@ -741,11 +741,24 @@ export class CapacityPreflightService {
           );
         }
         const oldDemand = await this.succeededRuntimeDemand(tx, previous);
+        // A start-first candidate may coexist with the preceding stack.
+        // Reserve both complete allocations until rollout completion; do not
+        // credit a partially replaced task without authoritative task evidence.
+        if (parsed.singleApps.some(app =>
+          app.runtimeState === "Running" && app.desiredReplicas > 0 &&
+          app.updatePolicy?.order === "start-first"
+        )) {
+          demand = {
+            cpuNano: demand.cpuNano + oldDemand.cpuNano,
+            memoryBytes: demand.memoryBytes + oldDemand.memoryBytes,
+          };
+        } else {
         demand = {
           cpuNano: demand.cpuNano > oldDemand.cpuNano ? demand.cpuNano : oldDemand.cpuNano,
           memoryBytes: demand.memoryBytes > oldDemand.memoryBytes
             ? demand.memoryBytes : oldDemand.memoryBytes,
         };
+        }
       }
       occupied = {
         cpuNano: occupied.cpuNano + demand.cpuNano,
