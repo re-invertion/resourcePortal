@@ -84,6 +84,30 @@ export class CapacityPreflightService {
     @Optional() private readonly policy?: CapacityPolicyService,
   ) {}
 
+  async hybridBudget(tx: Prisma.TransactionClient) {
+    if (!this.telemetry) return null;
+    const platform = await this.availablePlatformSupply(tx);
+    if (!platform.success) return null;
+    const [runningApps, inFlightSnapshots] = await Promise.all([
+      this.currentRunningApps(tx),
+      this.inFlightSnapshots(tx),
+    ]);
+    const result = await this.telemetry.evaluateAdmission({
+      snapshot: { appGroup: { id: "", tenantId: "", runtimeState: "Stopped" }, singleApps: [] },
+      runningApps,
+      inFlightSnapshots,
+      schedulableNodeIds: platform.schedulableNodeIds,
+    });
+    if (!result.usable) return null;
+    return {
+      deployableHeadroomBytes: (result.decision.deployableHeadroomBytes ?? 0n).toString(),
+      predictedExistingGrowthBytes: result.decision.predictedExistingGrowthBytes.toString(),
+      inFlightPredictedBytes: result.decision.inFlightPredictedBytes.toString(),
+      allowed: result.decision.allowed,
+      reason: result.decision.reason,
+    };
+  }
+
   async admitDeployment(
     tx: Prisma.TransactionClient,
     snapshot: CapacityDeploymentSnapshot,
@@ -509,11 +533,11 @@ export class CapacityPreflightService {
 
   private async inFlightSnapshots(
     tx: Prisma.TransactionClient,
-    excludedAppGroupId: string,
+    excludedAppGroupId?: string,
   ): Promise<CapacityDeploymentSnapshot[]> {
     const rows = await tx.appGroupDeployment.findMany({
       where: {
-        appGroupId: { not: excludedAppGroupId },
+        ...(excludedAppGroupId ? { appGroupId: { not: excludedAppGroupId } } : {}),
         status: DeploymentStatus.Deploying,
         phase: { in: Array.from(ADMITTED_PHASES) },
       },
