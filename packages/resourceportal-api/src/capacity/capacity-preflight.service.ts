@@ -328,7 +328,7 @@ export class CapacityPreflightService {
     if (configuredMode === "Hybrid" && this.telemetry) {
       const [runningApps, inFlightSnapshots] = await Promise.all([
         this.currentRunningApps(tx),
-        this.inFlightSnapshots(tx, snapshot.appGroup.id),
+        this.inFlightSnapshots(tx),
       ]);
       if (!inFlightSnapshots) return this.platformUnavailable("Cannot account active deployment capacity");
       const hybrid = await this.telemetry.evaluateAdmission({
@@ -744,7 +744,6 @@ export class CapacityPreflightService {
   > {
     const deployments = await tx.appGroupDeployment.findMany({
       where: {
-        appGroupId: { not: excludedAppGroupId },
         OR: [
           { status: DeploymentStatus.Succeeded },
           { status: DeploymentStatus.Deploying },
@@ -788,7 +787,8 @@ export class CapacityPreflightService {
           `Cannot account previous capacity for AppGroup ${succeeded.appGroupId}`,
         );
       }
-      if (previous) {
+      const sameGroup = rows[0].appGroupId === excludedAppGroupId;
+      if (previous && !sameGroup) {
         demand = await this.succeededRuntimeDemand(tx, previous);
         if (active.length) {
           const restored = snapshotDemand(previous);
@@ -805,7 +805,7 @@ export class CapacityPreflightService {
         const target = snapshotDemand(parsed);
         // Multiple unresolved attempts may leave distinct service identities
         // live. Only a single ordered replacement may credit the baseline.
-        if (active.length === 1 && previous && row.status !== DeploymentStatus.RollbackFailed && row.status !== DeploymentStatus.Failed) {
+        if (!sameGroup && active.length === 1 && previous && row.status !== DeploymentStatus.RollbackFailed && row.status !== DeploymentStatus.Failed) {
           demand = this.rolloutReservation(parsed, target, previous, demand);
         } else {
           demand = { cpuNano: demand.cpuNano + target.cpuNano, memoryBytes: demand.memoryBytes + target.memoryBytes };
