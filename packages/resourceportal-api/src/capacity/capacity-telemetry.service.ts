@@ -1145,7 +1145,16 @@ export class CapacityTelemetryReconcilerService
       const intervalMs =
         this.telemetry.policy().telemetryIntervalSeconds * 1000;
       if (!force && Date.now() - this.lastCollectedAt < intervalMs) return;
-      await this.telemetry.observeNow();
+      try {
+        await this.telemetry.observeNow();
+      } catch (error) {
+        if (!(error instanceof IncompleteReplicaTelemetryError)) throw error;
+        // Invalidate before retry: never admit from previously published
+        // evidence after detecting an inventory mismatch. A second full probe
+        // may recover a transient race with runtime reconciliation.
+        await this.telemetry.invalidatePublishedAdmissionEvidence(workerId, error, startedAt);
+        await this.telemetry.observeNow();
+      }
       publicationStarted = true;
       await this.telemetry.publishDiagnostics(workerId);
       this.lastCollectedAt = Date.now();
