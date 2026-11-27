@@ -16,6 +16,8 @@ import { CapacityTelemetryService } from "./capacity-telemetry.service";
 const CAPACITY_LOCK_NAMESPACE = "resourceportal:capacity:swarm";
 const SWARM_CLUSTER_SINGLETON_ID = "00000000-0000-0000-0000-000000000013";
 
+const POSSIBLY_APPLIED_PHASES = [DeploymentPhase.ApplyingStack, DeploymentPhase.WaitingForRollout, DeploymentPhase.RollingBack, DeploymentPhase.Cleanup, DeploymentPhase.Completed];
+
 const ADMITTED_PHASES = new Set<DeploymentPhase>([
   DeploymentPhase.PreparingArtifacts,
   DeploymentPhase.GeneratingStack,
@@ -578,16 +580,17 @@ export class CapacityPreflightService {
         OR: [
           { status: { in: [DeploymentStatus.Deploying, DeploymentStatus.RollingBack] }, phase: { in: Array.from(ADMITTED_PHASES) } },
           { status: DeploymentStatus.RollbackFailed },
+          { status: DeploymentStatus.Failed, phase: { in: POSSIBLY_APPLIED_PHASES } },
         ],
       },
       select: { stackConfig: true, appGroupId: true, version: true, status: true },
     });
-    const failed = rows.filter(row => row.status === DeploymentStatus.RollbackFailed);
+    const failed = rows.filter(row => row.status === DeploymentStatus.RollbackFailed || row.status === DeploymentStatus.Failed);
     const latestSucceeded = failed.length ? await tx.appGroupDeployment.findMany({
       where: { appGroupId: { in: failed.map(row => row.appGroupId) }, status: DeploymentStatus.Succeeded },
       select: { appGroupId: true, version: true },
     }) : [];
-    const snapshots = rows.filter(row => row.status !== DeploymentStatus.RollbackFailed ||
+    const snapshots = rows.filter(row => (row.status !== DeploymentStatus.RollbackFailed && row.status !== DeploymentStatus.Failed) ||
       !latestSucceeded.some(success => success.appGroupId === row.appGroupId && success.version > row.version)
     ).map((row) => this.parseSnapshot(row.stackConfig));
     if (snapshots.some(row => row === null)) return null;
@@ -727,6 +730,7 @@ export class CapacityPreflightService {
           { status: DeploymentStatus.Deploying },
           { status: DeploymentStatus.RollingBack },
           { status: DeploymentStatus.RollbackFailed },
+          { status: DeploymentStatus.Failed, phase: { in: POSSIBLY_APPLIED_PHASES } },
         ],
       },
       select: {
@@ -753,6 +757,7 @@ export class CapacityPreflightService {
       const active = rows.filter(row =>
         (!succeeded || row.version > succeeded.version) &&
         (row.status === DeploymentStatus.RollbackFailed ||
+          (row.status === DeploymentStatus.Failed && POSSIBLY_APPLIED_PHASES.includes(row.phase)) ||
           ((row.status === DeploymentStatus.Deploying || row.status === DeploymentStatus.RollingBack) &&
             ADMITTED_PHASES.has(row.phase))),
       );
@@ -774,7 +779,7 @@ export class CapacityPreflightService {
         const target = snapshotDemand(parsed);
         // Multiple unresolved attempts may leave distinct service identities
         // live. Only a single ordered replacement may credit the baseline.
-        if (active.length === 1 && previous && row.status !== DeploymentStatus.RollbackFailed) {
+        if (active.length === 1 && previous && row.status !== DeploymentStatus.RollbackFailed && row.status !== DeploymentStatus.Failed) {
           demand = this.rolloutReservation(parsed, target, previous, demand);
         } else {
           demand = { cpuNano: demand.cpuNano + target.cpuNano, memoryBytes: demand.memoryBytes + target.memoryBytes };
