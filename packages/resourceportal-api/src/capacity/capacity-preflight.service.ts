@@ -486,9 +486,10 @@ export class CapacityPreflightService {
   ): Promise<Array<{ appId: string; hardLimitBytes: bigint; replicas: number }>> {
     const rows = await tx.singleApp.findMany({
       where: {
-        runtimeState: "Running",
-        pendingDeletion: false,
-        appGroup: { runtimeState: "Running" },
+        OR: [
+          { runtimeState: "Running", pendingDeletion: false, appGroup: { runtimeState: "Running" } },
+          { actualReplicas: { gt: 0 } },
+        ],
       },
       select: {
         id: true,
@@ -496,6 +497,9 @@ export class CapacityPreflightService {
         memoryBytes: true,
         desiredReplicas: true,
         actualReplicas: true,
+        runtimeState: true,
+        pendingDeletion: true,
+        appGroup: { select: { runtimeState: true } },
       },
     });
     if (rows.length === 0) return [];
@@ -538,10 +542,12 @@ export class CapacityPreflightService {
 
     return rows.flatMap((item) => {
       const deployed = deployedByApp.get(item.id);
+      const running = item.runtimeState === "Running" &&
+        !item.pendingDeletion && item.appGroup.runtimeState === "Running";
       const replicas = Math.max(
         0,
         item.actualReplicas,
-        deployed?.replicas ?? item.desiredReplicas,
+        running ? (deployed?.replicas ?? item.desiredReplicas) : 0,
       );
       if (replicas <= 0) return [];
       const memoryBytes = deployed?.memoryBytes ?? item.memoryBytes;
