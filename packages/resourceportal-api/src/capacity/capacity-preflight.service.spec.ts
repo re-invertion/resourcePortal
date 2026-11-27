@@ -1144,4 +1144,28 @@ describe("Stage 15 capacity preflight", () => {
     );
   });
 
+  it("removes recovered failed reservations from Hybrid in-flight accounting", async () => {
+    platform({ cpuNano: 20_000_000_000n, memoryBytes: 8192n });
+    const id = "other-group";
+    const row = (version: number, status: DeploymentStatus, memoryBytes: string) => ({
+      appGroupId: id, version, status, phase: DeploymentPhase.Completed,
+      stackConfig: serializedSnapshot(deploymentSnapshot({ id, cpu: "1", memoryBytes })),
+    });
+    const restored = row(1, DeploymentStatus.Succeeded, "2048");
+    const failed = row(2, DeploymentStatus.RollbackFailed, "8192");
+    const recovery = { ...row(3, DeploymentStatus.RolledBack, "8192"), rollbackTargetVersion: 1 };
+    findDeployments.mockResolvedValueOnce([restored, failed, recovery])
+      .mockResolvedValueOnce([failed]).mockResolvedValueOnce([recovery, restored]);
+    const evaluateAdmission = vi.fn().mockResolvedValue({
+      usable: true, decision: { allowed: true }, predictions: [],
+      requestedPredictedBytes: 0n, reason: "test",
+    });
+    service = new CapacityPreflightService(
+      { evaluateAdmission } as never,
+      { current: () => ({ mode: "Hybrid" }) } as never,
+    );
+    await expect(service.admitDeployment(tx, deploymentSnapshot({ cpu: "1" }))).resolves.toMatchObject({ success: true });
+    expect(evaluateAdmission).toHaveBeenCalledWith(expect.objectContaining({ inFlightSnapshots: [] }));
+  });
+
 });
