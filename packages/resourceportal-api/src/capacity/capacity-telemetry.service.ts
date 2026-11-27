@@ -180,12 +180,15 @@ export class CapacityTelemetryService {
     const reportByNodeId = new Map(
       reports.map((report) => [report.swarmNodeId, report] as const),
     );
+    if (reportByNodeId.size !== reports.length) {
+      throw new Error("authenticated Swarm capacity telemetry contains duplicate node reports");
+    }
     const missingNodeIds = schedulableNodeIds.filter(
       (nodeId) => !reportByNodeId.has(nodeId),
     );
     if (missingNodeIds.length > 0) {
       throw new Error(
-        "authenticated Swarm capacity telemetry does not cover every schedulable node",
+        "authenticated Swarm capacity telemetry does not cover every schedulable node (" + missingNodeIds.length + " missing of " + schedulableNodeIds.length + " expected)",
       );
     }
     const coveredReports = schedulableNodeIds.map(
