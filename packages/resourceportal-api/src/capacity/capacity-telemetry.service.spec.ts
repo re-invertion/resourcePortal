@@ -825,7 +825,7 @@ describe("capacity policy validation", () => {
 });
 
 describe("worker admission evidence publication", () => {
-  it.each([false, true])("publishes deployed limits only after generation completion (pre-success=%s)", async preSuccess => {
+  it.each([[false, false], [true, false], [false, true], [true, true]])("publishes deployed limits only after generation completion (pre-success=%s, rolled-back=%s)", async (preSuccess, rolledBack) => {
     const store = new MemoryStore();
     const now = new Date().toISOString();
     store.points.push(
@@ -875,10 +875,14 @@ describe("worker admission evidence publication", () => {
           ]),
       },
       appGroupDeployment: {
-        findMany: (query: { where: { status: string } }) => Promise.resolve(query.where.status === "Succeeded" ? [{
+        findMany: (query: { where: { status: { in: string[] } } }) => Promise.resolve(query.where.status.in.includes("Succeeded") ? [...(rolledBack ? [{
+          appGroupId: "group-deployed", version: 2, status: "RolledBack", rollbackTargetVersion: 1,
+          completedAt: new Date(Date.parse(now) + (preSuccess ? 1000 : -30_000)),
+          stackConfig: JSON.stringify({ appGroup: { id: "group-deployed" }, singleApps: [{ id: "existing-app", resources: { memoryBytes: (8n * GiB).toString() } }] }),
+        }] : []), {
           appGroupId: "group-deployed",
-          version: 1,
-          completedAt: new Date(Date.parse(now) + (preSuccess ? 1000 : -60_000)),
+          version: 1, status: "Succeeded",
+          completedAt: new Date(Date.parse(now) + (!rolledBack && preSuccess ? 1000 : -60_000)),
           stackConfig: JSON.stringify({ appGroup: { id: "group-deployed" }, singleApps: [{ id: "existing-app", resources: { memoryBytes: (2n * GiB).toString() } }] }),
         }] : []),
       },
@@ -912,6 +916,7 @@ describe("worker admission evidence publication", () => {
         {
           appId: "existing-app",
           replicas: 1,
+          generation: `group-deployed:${rolledBack ? 2 : 1}:${new Date(Date.parse(now) - (rolledBack ? 30_000 : 60_000)).toISOString()}`,
           hardLimitBytes: (2n * GiB).toString(),
         },
       ],
@@ -955,8 +960,8 @@ describe("worker admission evidence publication", () => {
         findMany: () => Promise.resolve([{ swarmNodeId: nodeA }]),
       },
       appGroupDeployment: {
-        findMany: (query: { where: { status: unknown } }) => Promise.resolve(query.where.status === "Succeeded" ? [{
-          appGroupId: "group-deployed", version: 1, completedAt,
+        findMany: (query: { where: { status: { in: string[] } } }) => Promise.resolve(query.where.status.in.includes("Succeeded") ? [{
+          appGroupId: "group-deployed", version: 1, status: "Succeeded", completedAt,
           stackConfig: JSON.stringify({ appGroup: { id: "group-deployed" }, singleApps: [{ id: "existing-app", resources: { memoryBytes: (2n * GiB).toString() } }] }),
         }] : []),
       },
