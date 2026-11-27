@@ -526,7 +526,13 @@ describe("worker collection completeness", () => {
     };
     const nodeProbe = { collect: vi.fn()
       .mockResolvedValueOnce([report(nodeA, 20, 1)])
-      .mockResolvedValueOnce([report(nodeA, 20, 2)]) };
+      .mockResolvedValueOnce([{
+        ...report(nodeA, 20, 1),
+        containers: [
+          ...report(nodeA, 20, 1).containers,
+          ...report(nodeB, 20, 1).containers.map(container => ({ ...container, id: "bbbbbbbbbbbb" })),
+        ],
+      }]) };
     const telemetry = new CapacityTelemetryService(
       store as never, new CapacityPolicyService(config as never),
       prisma as never, nodeProbe as never,
