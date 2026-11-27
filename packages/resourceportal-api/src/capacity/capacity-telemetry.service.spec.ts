@@ -504,7 +504,7 @@ describe("worker collection completeness", () => {
     );
     const reconciler = new CapacityTelemetryReconcilerService(telemetry, config as never);
     await reconciler.collect(true);
-    expect(upsert).toHaveBeenCalledOnce();
+    expect(upsert).toHaveBeenCalledTimes(2);
     expect(upsert.mock.calls[0]?.[0].create).toMatchObject({
       lastResult: {
         unavailable: true,
@@ -515,6 +515,30 @@ describe("worker collection completeness", () => {
       failureCount: 1,
     });
     expect(JSON.stringify(upsert.mock.calls[0]?.[0])).not.toContain("existing-app");
+  });
+
+  it("invalidates evidence then retries a transient replica mismatch with a complete fresh probe", async () => {
+    const store = new MemoryStore();
+    const prisma = {
+      singleApp: { findMany: vi.fn().mockResolvedValue([{ id: "existing-app", actualReplicas: 2 }]) },
+      remoteLocation: { findMany: vi.fn().mockResolvedValue([{ swarmNodeId: nodeA }]) },
+      workerReconciliationState: { findFirst: vi.fn().mockResolvedValue(null), upsert: vi.fn().mockResolvedValue({}) },
+    };
+    const nodeProbe = { collect: vi.fn()
+      .mockResolvedValueOnce([report(nodeA, 20, 1)])
+      .mockResolvedValueOnce([report(nodeA, 20, 2)]) };
+    const telemetry = new CapacityTelemetryService(
+      store as never, new CapacityPolicyService(config as never),
+      prisma as never, nodeProbe as never,
+    );
+    const publish = vi.spyOn(telemetry, "publishDiagnostics").mockResolvedValue({} as never);
+    await new CapacityTelemetryReconcilerService(telemetry, config as never).collect(true);
+    expect(nodeProbe.collect).toHaveBeenCalledTimes(2);
+    expect(prisma.workerReconciliationState.upsert).toHaveBeenCalledOnce();
+    expect(publish).toHaveBeenCalledOnce();
+    expect(prisma.workerReconciliationState.upsert.mock.invocationCallOrder[0])
+      .toBeLessThan(publish.mock.invocationCallOrder[0]);
+    expect(store.points.find(point => point.appId === "existing-app")?.replicaCount).toBe(2);
   });
 
   it("invalidates fresh published evidence immediately when a whole node probe is missing", async () => {
