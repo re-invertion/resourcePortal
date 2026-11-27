@@ -990,7 +990,11 @@ export class CapacityTelemetryService {
       if (!runtimeStart && (!app.name || !current.serviceName ||
           app.name.replaceAll("-", "_") !== current.serviceName.replaceAll("-", "_") ||
           current.reverseStopFirst !== true)) {
-        increment += targetHard;
+        // Reserve the entire incoming stack plus any old allocation not
+        // already covered by its baseline prediction. This bounds reverse
+        // overlap even when the previous hard limit exceeds the candidate.
+        const baseline = currentPredictionByApp.get(app.id) ?? current.hardLimitBytes;
+        increment += targetHard + (current.hardLimitBytes > baseline ? current.hardLimitBytes - baseline : 0n);
         continue;
       }
       const baseline =
