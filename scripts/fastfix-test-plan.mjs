@@ -98,6 +98,7 @@ const commands = {
   ],
   "resource-bot": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/resource-bot"],
+    ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/platform-resource-bot.test.tsx", "src/components/stored-secret-input.test.tsx"],
   ],
   "operations": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/operations"],
@@ -547,6 +548,7 @@ const classifiers = [
   // ResourceBot billing idempotency is a cross-replica financial security boundary.
   [/^packages\/resourceportal-api\/src\/resource-bot\/resource-bot-(?:billing\.service|reservation-concurrency\.spec)\.ts$/, ["resource-bot", "security"]],
   [/^packages\/resourceportal-api\/src\/resource-bot\//, ["resource-bot"]],
+  [/^packages\/resourceportal-web\/src\/pages\/platform-resource-bot(?:\.test)?\.tsx$/, ["resource-bot", "security"]],
   // Permissionless tenant identities must never inherit RP authorization
   // from bare membership, even on older routes without a permission decorator.
   [/^packages\/resourceportal-api\/src\/tenants\/tenants\.service(\.spec)?\.ts$/, ["tenant-access", "security"]],
