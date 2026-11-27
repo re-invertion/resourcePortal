@@ -575,8 +575,10 @@ export class CapacityPreflightService {
     const rows = await tx.appGroupDeployment.findMany({
       where: {
         ...(excludedAppGroupId ? { appGroupId: { not: excludedAppGroupId } } : {}),
-        status: { in: [DeploymentStatus.Deploying, DeploymentStatus.RollingBack] },
-        phase: { in: Array.from(ADMITTED_PHASES) },
+        OR: [
+          { status: { in: [DeploymentStatus.Deploying, DeploymentStatus.RollingBack] }, phase: { in: Array.from(ADMITTED_PHASES) } },
+          { status: DeploymentStatus.RollbackFailed },
+        ],
       },
       select: { stackConfig: true },
     });
@@ -717,6 +719,7 @@ export class CapacityPreflightService {
           { status: DeploymentStatus.Succeeded },
           { status: DeploymentStatus.Deploying },
           { status: DeploymentStatus.RollingBack },
+          { status: DeploymentStatus.RollbackFailed },
         ],
       },
       select: {
@@ -740,14 +743,15 @@ export class CapacityPreflightService {
       const active = rows
         .filter(
           (row) =>
-            (row.status === DeploymentStatus.Deploying || row.status === DeploymentStatus.RollingBack) &&
-            ADMITTED_PHASES.has(row.phase),
+            row.status === DeploymentStatus.RollbackFailed ||
+            ((row.status === DeploymentStatus.Deploying || row.status === DeploymentStatus.RollingBack) &&
+            ADMITTED_PHASES.has(row.phase)),
         )
         .sort((a, b) => b.version - a.version)[0];
       const succeeded = rows
         .filter((row) => row.status === DeploymentStatus.Succeeded)
         .sort((a, b) => b.version - a.version)[0];
-      const selected = active ?? succeeded;
+      const selected = active && (!succeeded || active.version > succeeded.version) ? active : succeeded;
       if (!selected) {
         continue;
       }
@@ -758,10 +762,10 @@ export class CapacityPreflightService {
           `Cannot account deployment capacity for AppGroup ${selected.appGroupId}`,
         );
       }
-      let demand = active
+      let demand = selected === active
         ? snapshotDemand(parsed)
         : await this.succeededRuntimeDemand(tx, parsed);
-      if (active && succeeded) {
+      if (selected === active && succeeded) {
         // The preceding successful stack can remain live during a rollout.
         // Do not release its CPU/RAM reservation merely because a smaller
         // draft has entered PreparingArtifacts. Retain each resource high-water
