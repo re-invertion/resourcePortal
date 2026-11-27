@@ -900,8 +900,8 @@ describe("Stage 15 capacity preflight", () => {
     };
     findDeployments
       .mockResolvedValueOnce([deployed])
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([deployed]);
+      .mockResolvedValueOnce([deployed])
+      .mockResolvedValueOnce([]);
     findAppGroup.mockResolvedValue({ runtimeState: "Running" });
     findSingleApps
       .mockResolvedValueOnce([{
@@ -913,6 +913,9 @@ describe("Stage 15 capacity preflight", () => {
       .mockResolvedValueOnce([{
         id: startedAppId,
         appGroupId: startedGroupId,
+        runtimeState: "Running",
+        pendingDeletion: false,
+        appGroup: { runtimeState: "Running" },
         memoryBytes: 10n * GiB,
         desiredReplicas: 10,
         actualReplicas: 0,
