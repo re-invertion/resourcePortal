@@ -447,7 +447,7 @@ export function PlatformInfrastructurePage({section = "overview"}:{section?:Infr
             <MetricCard label="Physical RAM available" value={capacityRow.physicalMemoryAvailableBytes ? formatBytes(capacityRow.physicalMemoryAvailableBytes) : "Unavailable"} detail={capacityRow.physicalMemoryTotalBytes ? "of "+formatBytes(capacityRow.physicalMemoryTotalBytes)+" total" : "No fresh node telemetry"} loading={capacity.loading} />
             <MetricCard label="Hard limits" value={formatBytes(capacityRow.hardLimitBytes)} detail="Running container hard-limit total" loading={capacity.loading} />
             <MetricCard label="Predicted demand" value={predictionSummary} detail={predictionExplanation} loading={capacity.loading} />
-            <MetricCard label="Real headroom" value={hasNodeTelemetry ? formatBytes(capacityRow.minimumNodeHeadroomBytes) : "Unavailable"} detail={hasNodeTelemetry ? "Minimum node headroom after safety reserve" : "No current node telemetry; zero is not a measured headroom"} loading={capacity.loading} />
+            <MetricCard label="Pre-growth headroom" value={hasNodeTelemetry ? formatBytes(capacityRow.minimumNodeHeadroomBytes) : "Unavailable"} detail={hasNodeTelemetry ? "Before predicted growth and in-flight demand; not deployable RAM" : "No current node telemetry; zero is not a measured headroom"} loading={capacity.loading} />
             <MetricCard label="Safety reserve" value={formatBytes(capacityRow.safetyReserveBytes)} detail={String(numberOf(capacityPolicy.nodeSafetyBufferPercent,20))+"% node buffer · "+String(Array.isArray(capacityRow.activeDeploymentReservations)?capacityRow.activeDeploymentReservations.length:0)+" active deployment reservation(s)"} loading={capacity.loading} />
           </section>
           <DetailList columns={3} items={[
@@ -456,6 +456,7 @@ export function PlatformInfrastructurePage({section = "overview"}:{section?:Infr
             {label:"Samples retained",value:Number.isFinite(retainedSamples) && retainedSamples > 0 ? String(retainedSamples) : "No samples"},
             {label:"Fresh observation",value:formatDate(capacityNode.observedAt)},
             {label:"Worker snapshot",value:formatDate(capacityTelemetryState.lastSuccessAt)},
+            {label:"Telemetry status",value:capacityRow.telemetryFresh===true?"Fresh published snapshot":capacityRow.telemetryFresh===false?"Unavailable or stale — Hybrid may fall back to Strict":"Unknown"},
           ]}/>
           <div>
             <h3 className="text-sm font-semibold text-[#172033]">Swarm nodes</h3>
