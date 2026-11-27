@@ -367,6 +367,29 @@ describe("Hybrid admission from worker-published telemetry", () => {
     expect(result.requestedPredictedBytes).toBe(2n * GiB);
   });
 
+  it("does not reserve a replacement batch for a runtime start", async () => {
+    const { telemetry } = admissionService(
+      [report(nodeA, 24, 1)],
+      [appEvidence("existing-app", 1, 2, 1)],
+    );
+    const candidate = snapshot(2, "existing-app");
+    const result = await telemetry.evaluateAdmission({
+      snapshot: {
+        ...candidate,
+        singleApps: candidate.singleApps.map(app => ({
+          ...app, updatePolicy: { order: "start-first", parallelism: 1 },
+        })),
+      } as never,
+      runtimeStart: true,
+      runningApps: [{ appId: "existing-app", hardLimitBytes: 2n * GiB, replicas: 1 }],
+      inFlightSnapshots: [],
+      schedulableNodeIds: [nodeA],
+    });
+    expect(result.usable).toBe(true);
+    if (!result.usable) return;
+    expect(result.requestedPredictedBytes).toBe(0n);
+  });
+
   it("reserves newly enabled hard-limit growth when replica count is unchanged", async () => {
     const { telemetry } = admissionService(
       [report(nodeA, 16, 1)],
