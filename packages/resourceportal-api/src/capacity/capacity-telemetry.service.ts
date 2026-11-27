@@ -604,9 +604,10 @@ export class CapacityTelemetryService {
       await Promise.all([
         this.prisma.singleApp.findMany({
           where: {
-            runtimeState: "Running",
-            pendingDeletion: false,
-            appGroup: { runtimeState: "Running" },
+            OR: [
+              { runtimeState: "Running", pendingDeletion: false, appGroup: { runtimeState: "Running" } },
+              { actualReplicas: { gt: 0 } },
+            ],
           },
           select: {
             id: true,
