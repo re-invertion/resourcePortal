@@ -74,7 +74,7 @@ export type HybridAdmissionEvaluation =
 
 /** Counts only: tenant identities must not leak via capacity/admission diagnostics. */
 class IncompleteReplicaTelemetryError extends Error {
-  constructor(readonly missingReplicaCount: number) {
+  constructor(readonly missingReplicaCount: number, readonly unexpectedReplicaCount = 0) {
     super("application replica telemetry does not match observed runtime replicas");
     this.name = "IncompleteReplicaTelemetryError";
   }
@@ -235,7 +235,7 @@ export class CapacityTelemetryService {
     if (missingReplicaCount > 0 || unexpectedReplicaCount > 0) {
       // Missing samples can be caused by legacy task labels or another probe
       // coverage issue; do not claim migration is certainly required.
-      throw new IncompleteReplicaTelemetryError(missingReplicaCount);
+      throw new IncompleteReplicaTelemetryError(missingReplicaCount, unexpectedReplicaCount);
     }
 
     const byApp = new Map<string, typeof containers>();
@@ -858,6 +858,9 @@ export class CapacityTelemetryService {
         : "TelemetryUnavailable",
       missingReplicaCount: error instanceof IncompleteReplicaTelemetryError
         ? error.missingReplicaCount
+        : undefined,
+      unexpectedReplicaCount: error instanceof IncompleteReplicaTelemetryError
+        ? error.unexpectedReplicaCount
         : undefined,
       admissionEvidence: null,
     });
