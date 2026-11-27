@@ -38,6 +38,7 @@ export type CapacityDeploymentSnapshot = {
     CapacitySnapshotSingleApp & {
       id?: string;
       volumes: Array<{ volumeId: string }>;
+      updatePolicy?: { order?: unknown; parallelism?: unknown };
     }
   >;
 };
