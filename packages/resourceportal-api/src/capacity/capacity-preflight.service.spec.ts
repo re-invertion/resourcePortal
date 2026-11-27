@@ -738,6 +738,28 @@ describe("Stage 15 capacity preflight", () => {
       if (!stale.success) expect(stale.message).toContain("WorkerTelemetryUnavailableOrStale");
     });
 
+    it.each(["healthy", "stale"] as const)("accounts for two unchanged stop-first services (#534, %s)", async evidence => {
+      const GiB = 1_073_741_824n;
+      platform({ cpuNano: 20_000_000_000n, memoryBytes: 67_417_341_952n });
+      const old = deploymentSnapshot({ cpu: "1", memoryBytes: String(2n * GiB) });
+      old.singleApps[0].id = "wrapper";
+      old.singleApps[0].updatePolicy = { order: "stop-first" };
+      old.singleApps.push({ ...old.singleApps[0], id: "browser" });
+      findLatestDeployment.mockResolvedValue({ stackConfig: serializedSnapshot(old) });
+      findDeployments.mockResolvedValueOnce([{
+        appGroupId: "other-group", version: 1, status: DeploymentStatus.Succeeded, phase: DeploymentPhase.Completed,
+        stackConfig: serializedSnapshot(deploymentSnapshot({ id: "other-group", cpu: "1", memoryBytes: String(60n * GiB) })),
+      }]);
+      const evaluateAdmission = vi.fn().mockResolvedValue(evidence === "healthy"
+        ? { usable: true, decision: { allowed: true } }
+        : { usable: false, reason: "fresh worker-published Hybrid admission telemetry is unavailable" });
+      service = new CapacityPreflightService({ evaluateAdmission } as never, { current: () => ({ mode: "Hybrid" }) } as never);
+      const result = await service.admitDeployment(tx, old);
+      expect(result.success).toBe(evidence === "healthy");
+      if (result.success) expect(result.demand.memoryBytes).toBe(4n * GiB);
+      else expect(result.message).toContain("WorkerTelemetryUnavailableOrStale");
+    });
+
     it("reports telemetry unavailable/stale reason without bypassing strict reservation limits", async () => {
       nearLimitReservation();
       const evaluateAdmission = vi.fn().mockResolvedValue({
