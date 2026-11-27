@@ -905,7 +905,15 @@ export class CapacityPreflightService {
         !parsed?.appGroup ||
         typeof parsed.appGroup.id !== "string" ||
         typeof parsed.appGroup.runtimeState !== "string" ||
-        !Array.isArray(parsed.singleApps)
+        !Array.isArray(parsed.singleApps) ||
+        parsed.singleApps.some(app =>
+          !app || !["Running", "Stopped"].includes(app.runtimeState) ||
+          !Number.isSafeInteger(app.desiredReplicas) || app.desiredReplicas < 0 ||
+          !app.resources ||
+          typeof app.resources.memoryBytes !== "string" ||
+          !/^[0-9]+$/.test(app.resources.memoryBytes) ||
+          !Array.isArray(app.volumes)
+        )
       ) {
         return null;
       }
