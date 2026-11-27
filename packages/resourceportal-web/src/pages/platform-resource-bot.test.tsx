@@ -34,7 +34,9 @@ it("masks the stored OpenAI key without sending the mask or rotating an untouche
 
   render(<PlatformResourceBotPage />);
 
-  const key = (await screen.findByLabelText("OpenAI API key")) as HTMLInputElement;
+  // Wait for the configured credential state, not just the initial form render.
+  await screen.findByText("••••••••••••");
+  const key = screen.getByLabelText("OpenAI API key") as HTMLInputElement;
   expect(key.value).toBe("");
   expect(key.placeholder).toBe("");
   expect(screen.getByText("••••••••••••")).toBeTruthy();
