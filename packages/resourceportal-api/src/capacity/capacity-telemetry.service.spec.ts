@@ -320,7 +320,7 @@ describe("Hybrid admission from worker-published telemetry", () => {
     expect(result.usable).toBe(true);
     if (!result.usable) return;
     expect(result.requestedPredictedBytes).toBe(2n * GiB);
-    expect(result.inFlightPredictedBytes).toBe(2n * GiB);
+    expect(result.decision.inFlightPredictedBytes).toBe(2n * GiB);
   });
 
   it("retains growth after success while prior-generation evidence is still fresh", async () => {
