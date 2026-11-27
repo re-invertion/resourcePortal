@@ -104,6 +104,38 @@ describe("Stage 15 capacity preflight", () => {
     }
   });
 
+  it.each(["start-first", "stop-first"] as const)(
+    "accounts for an existing candidate with %s order",
+    async order => {
+      platform({ cpuNano: 8_000_000_000n, memoryBytes: 3_072n });
+      const snapshot = deploymentSnapshot();
+      snapshot.singleApps[0].id = "existing-app";
+      snapshot.singleApps[0].updatePolicy = { order };
+      findLatestDeployment.mockResolvedValue({ stackConfig: serializedSnapshot(snapshot) });
+      const result = await service.admitDeployment(tx, snapshot);
+      expect(result.success).toBe(order === "stop-first");
+      if (result.success) expect(result.demand.memoryBytes).toBe(2_048n);
+    },
+  );
+
+  it("does not offset a growing stop-first service against a shrinking service", async () => {
+    platform({ cpuNano: 20_000_000_000n, memoryBytes: 6_144n });
+    const old = deploymentSnapshot({ cpu: "1", memoryBytes: "4096" });
+    old.singleApps[0].id = "app-a";
+    old.singleApps[0].updatePolicy = { order: "stop-first" };
+    old.singleApps.push({
+      ...old.singleApps[0], id: "app-b",
+      resources: { ...old.singleApps[0].resources, memoryBytes: "1024" },
+    });
+    const target = { ...old, singleApps: old.singleApps.map((app, index) => ({
+      ...app, resources: { ...app.resources, memoryBytes: index === 0 ? "1024" : "4096" },
+    })) };
+    findLatestDeployment.mockResolvedValue({ stackConfig: serializedSnapshot(old) });
+    await expect(service.admitDeployment(tx, target)).resolves.toMatchObject({
+      success: false, errorCode: "InsufficientCapacity",
+    });
+  });
+
   it("returns PlatformUnavailable when Swarm inventory has not been reconciled", async () => {
     queryRaw
       .mockResolvedValueOnce([{ locked: true }])
