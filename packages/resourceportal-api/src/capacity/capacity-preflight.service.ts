@@ -131,12 +131,28 @@ export class CapacityPreflightService {
       return occupiedResult;
     }
 
+    const candidateDemand = snapshotDemand(snapshot);
+    const previous = await tx.appGroupDeployment.findFirst({
+      where: { appGroupId: snapshot.appGroup.id, status: DeploymentStatus.Succeeded },
+      orderBy: { version: "desc" },
+      select: { stackConfig: true },
+    });
+    let peakDemand = candidateDemand;
+    if (previous) {
+      const deployed = this.parseSnapshot(previous.stackConfig);
+      if (!deployed || deployed.appGroup.id !== snapshot.appGroup.id ||
+          deployed.appGroup.tenantId !== snapshot.appGroup.tenantId) {
+        return this.platformUnavailable("Cannot account preceding deployment capacity");
+      }
+      const old = await this.succeededRuntimeDemand(tx, deployed);
+      peakDemand = this.rolloutReservation(snapshot, candidateDemand, old);
+    }
     return this.fitAdmission(
       tx,
       snapshot,
       platformResult.supply,
       occupiedResult.occupied,
-      snapshotDemand(snapshot),
+      peakDemand,
       platformResult.schedulableNodeIds,
     );
   }
@@ -741,24 +757,7 @@ export class CapacityPreflightService {
           );
         }
         const oldDemand = await this.succeededRuntimeDemand(tx, previous);
-        // A start-first candidate may coexist with the preceding stack.
-        // Reserve both complete allocations until rollout completion; do not
-        // credit a partially replaced task without authoritative task evidence.
-        if (parsed.singleApps.some(app =>
-          app.runtimeState === "Running" && app.desiredReplicas > 0 &&
-          app.updatePolicy?.order === "start-first"
-        )) {
-          demand = {
-            cpuNano: demand.cpuNano + oldDemand.cpuNano,
-            memoryBytes: demand.memoryBytes + oldDemand.memoryBytes,
-          };
-        } else {
-        demand = {
-          cpuNano: demand.cpuNano > oldDemand.cpuNano ? demand.cpuNano : oldDemand.cpuNano,
-          memoryBytes: demand.memoryBytes > oldDemand.memoryBytes
-            ? demand.memoryBytes : oldDemand.memoryBytes,
-        };
-        }
+        demand = this.rolloutReservation(parsed, demand, oldDemand);
       }
       occupied = {
         cpuNano: occupied.cpuNano + demand.cpuNano,
@@ -767,6 +766,20 @@ export class CapacityPreflightService {
     }
 
     return { success: true, occupied };
+  }
+
+  private rolloutReservation(snapshot: CapacityDeploymentSnapshot, target: CapacityDemand, previous: CapacityDemand): CapacityDemand {
+    // Conservatively reserve both stacks for explicit start-first updates.
+    // Stop-first retains the previous allocation until completion.
+    const overlaps = snapshot.appGroup.runtimeState === "Running" &&
+      snapshot.singleApps.some(app => app.runtimeState === "Running" &&
+        app.desiredReplicas > 0 && app.updatePolicy?.order === "start-first");
+    return {
+      cpuNano: overlaps ? target.cpuNano + previous.cpuNano :
+        target.cpuNano > previous.cpuNano ? target.cpuNano : previous.cpuNano,
+      memoryBytes: overlaps ? target.memoryBytes + previous.memoryBytes :
+        target.memoryBytes > previous.memoryBytes ? target.memoryBytes : previous.memoryBytes,
+    };
   }
 
   private async succeededRuntimeDemand(
