@@ -183,7 +183,12 @@ export class CapacityPreflightService {
       select: { stackConfig: true },
     });
 
-    if (!deployment?.stackConfig) {
+    if (deployment && !deployment.stackConfig) return this.platformUnavailable("Cannot account committed runtime capacity");
+    if (!deployment) {
+      const unresolved = await this.inFlightSnapshots(tx);
+      if (!unresolved || unresolved.some(item => item.appGroup.id === input.appGroupId)) {
+        return this.platformUnavailable("Cannot start runtime with unresolved deployment capacity");
+      }
       return {
         success: true,
         demand: { cpuNano: 0n, memoryBytes: 0n },
