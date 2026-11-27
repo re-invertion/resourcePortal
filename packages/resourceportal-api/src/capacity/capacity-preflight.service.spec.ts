@@ -294,7 +294,7 @@ describe("Stage 15 capacity preflight", () => {
     await expect(service.admitDeployment(tx, target)).resolves.toMatchObject({ success: false, errorCode: "InsufficientCapacity" });
   });
 
-  it("retains all unresolved failed rollback versions until a newer success", async () => {
+  it.each([DeploymentStatus.Succeeded, DeploymentStatus.RolledBack])("retains all unresolved failed rollback versions until a newer %s", async status => {
     platform({ cpuNano: 20_000_000_000n, memoryBytes: 7_168n });
     const id = "other-group";
     const row = (version: number, status: DeploymentStatus, memoryBytes: string) => ({
@@ -312,7 +312,7 @@ describe("Stage 15 capacity preflight", () => {
       row(1, DeploymentStatus.Succeeded, "2048"),
       row(2, DeploymentStatus.RollbackFailed, "2048"),
       row(3, DeploymentStatus.RollbackFailed, "2048"),
-      row(4, DeploymentStatus.Succeeded, "2048"),
+      { ...row(4, status, status === DeploymentStatus.RolledBack ? "8192" : "2048"), rollbackTargetVersion: status === DeploymentStatus.RolledBack ? 1 : null },
     ]);
     await expect(service.admitDeployment(tx, deploymentSnapshot({ cpu: "1", memoryBytes: "2048" }))).resolves.toMatchObject({ success: true, occupied: { memoryBytes: 2048n } });
   });
