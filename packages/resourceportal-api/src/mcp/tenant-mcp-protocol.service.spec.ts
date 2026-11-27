@@ -121,6 +121,48 @@ describe("TenantMcpProtocolService", () => {
     vi.unstubAllGlobals();
   });
 
+  it("publishes exactly one OpenAI-compatible connection profile without breaking the legacy profile", async () => {
+    const { service } = fixture();
+    const connection = await connectClient({
+      service,
+      request: mcpRequest({ authorization: "Bearer profile-test-token" }),
+      authenticated: true,
+    });
+    try {
+      const { tools } = await connection.client.listTools();
+      const profiles = tools.filter((tool) => tool._meta?.["openai/profile"] === true);
+      expect(profiles.map((tool) => tool.name)).toEqual(["resourceportal_connection_profile"]);
+      expect(profiles[0].outputSchema).toMatchObject({
+        type: "object",
+        additionalProperties: false,
+        required: ["id"],
+        properties: {
+          id: { type: "string", minLength: 1, pattern: "\\S" },
+          name: { type: "string" },
+          email: { type: "string" },
+        },
+      });
+      expect(profiles[0].annotations?.readOnlyHint).toBe(true);
+      const response = await connection.client.callTool({ name: "resourceportal_connection_profile", arguments: {} });
+      expect(response.isError).not.toBe(true);
+      expect(response.structuredContent).toEqual({
+        id: expect.stringMatching(/^[a-f0-9]{64}$/) as unknown,
+        name: actor.displayName,
+        email: actor.email,
+      });
+      expect(response.content).toEqual([{ type: "text", text: JSON.stringify(response.structuredContent, null, 2) }]);
+      const again = await connection.client.callTool({ name: "resourceportal_connection_profile", arguments: {} });
+      expect(again.structuredContent).toEqual(response.structuredContent);
+      const legacy = await connection.client.callTool({ name: "resourceportal_profile", arguments: {} });
+      expect(legacy.structuredContent).toMatchObject({
+        user: { id: actor.id, email: actor.email, displayName: actor.displayName },
+        tenantId,
+      });
+    } finally {
+      await connection.close();
+    }
+  });
+
   it("uses the official MCP v2 transport and exposes OpenAI auth metadata on focused tools", async () => {
     const { service } = fixture();
     const connection = await connectClient({
@@ -158,7 +200,7 @@ describe("TenantMcpProtocolService", () => {
       expect(connection.rawResponses.join("\n")).toContain(
         '"securitySchemes"',
       );
-      expect(profile._meta?.["openai/profile"]).toBe(true);
+      expect(profile._meta?.["openai/profile"]).toBeUndefined();
       expect(profile.annotations).toMatchObject({
         readOnlyHint: true,
         destructiveHint: false,
@@ -227,7 +269,7 @@ describe("TenantMcpProtocolService", () => {
     try {
       await connection.client.listTools();
       const result = await connection.client.callTool({
-        name: "resourceportal_profile",
+        name: "resourceportal_connection_profile",
         arguments: {},
       });
 

@@ -151,6 +151,15 @@ export class AdminMcpProtocolService {
       );
     }
 
+    if (name === "resourceportal_admin_connection_profile") {
+      await this.recordToolCall(context, name, true);
+      return this.toolResult({
+        id: context.actor.id,
+        name: context.actor.displayName,
+        email: context.actor.email,
+      });
+    }
+
     if (name === "resourceportal_admin_profile") {
       await this.recordToolCall(context, name, true);
       return this.toolResult({
@@ -236,10 +245,21 @@ export class AdminMcpProtocolService {
       },
       _meta: {
         ...commonMeta,
-        "openai/profile": true,
         "openai/toolInvocation/invoking": "Reading ResourcePortal Admin profile…",
         "openai/toolInvocation/invoked": "ResourcePortal Admin profile loaded",
       },
+    };
+    const connectionProfile: ToolDescriptor = {
+      ...profile,
+      name: "resourceportal_admin_connection_profile",
+      title: "ResourcePortal Admin connection profile",
+      description: "Return the authenticated platform administrator profile for account linking.",
+      outputSchema: this.objectSchema({
+        id: { type: "string", minLength: 1, pattern: "\\S" },
+        name: { type: "string" },
+        email: { type: "string" },
+      }, ["id"]),
+      _meta: { ...commonMeta, "openai/profile": true },
     };
     const capabilities: ToolDescriptor = {
       name: "resourceportal_admin_capabilities",
@@ -263,7 +283,7 @@ export class AdminMcpProtocolService {
       },
       _meta: commonMeta,
     };
-    return [profile, capabilities, ...definitions];
+    return [profile, connectionProfile, capabilities, ...definitions];
   }
 
   private definitions(): AdminToolDefinition[] {

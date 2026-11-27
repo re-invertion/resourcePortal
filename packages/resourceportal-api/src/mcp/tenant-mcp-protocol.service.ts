@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { BadRequestException, Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import type {
@@ -129,6 +130,17 @@ export class TenantMcpProtocolService {
     }
 
     switch (name) {
+      case "resourceportal_connection_profile":
+        await this.settings.assertUserCanUseMcp(context.tenantId, context.actor.id);
+        await this.recordToolCall(context, name, true);
+        return this.toolResult({
+          id: createHash("sha256")
+            .update(JSON.stringify([context.tenantId, context.actor.id]))
+            .digest("hex"),
+          name: context.actor.displayName,
+          email: context.actor.email,
+        });
+
       case "resourceportal_profile":
         await this.recordToolCall(context, name, true);
         return this.toolResult({
@@ -966,6 +978,19 @@ export class TenantMcpProtocolService {
 
     return [
       {
+        ...readTool(
+          "resourceportal_connection_profile",
+          "ResourcePortal connection profile",
+          "Return the authenticated tenant account profile for account linking.",
+        ),
+        outputSchema: this.objectSchema({
+          id: { type: "string", minLength: 1, pattern: "\\S" },
+          name: { type: "string" },
+          email: { type: "string" },
+        }, ["id"]),
+        _meta: { ...commonMeta, "openai/profile": true },
+      },
+      {
         name: "resourceportal_profile",
         title: "ResourcePortal profile",
         description:
@@ -996,7 +1021,6 @@ export class TenantMcpProtocolService {
         },
         _meta: {
           ...commonMeta,
-          "openai/profile": true,
           "openai/toolInvocation/invoking": "Reading ResourcePortal profile…",
           "openai/toolInvocation/invoked": "ResourcePortal profile loaded",
         },
