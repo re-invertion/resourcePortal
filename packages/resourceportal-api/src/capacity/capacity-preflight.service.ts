@@ -217,6 +217,7 @@ export class CapacityPreflightService {
       occupiedResult.occupied,
       demand,
       platformResult.schedulableNodeIds,
+      true,
     );
   }
 
@@ -280,6 +281,7 @@ export class CapacityPreflightService {
     occupied: CapacityDemand,
     demand: CapacityDemand,
     schedulableNodeIds: string[],
+    runtimeStart = false,
   ): Promise<CapacityAdmissionResult> {
     const fit = projectedCapacityFits(supply, occupied, demand);
 
@@ -304,6 +306,7 @@ export class CapacityPreflightService {
         runningApps,
         inFlightSnapshots,
         schedulableNodeIds,
+        runtimeStart,
       });
       if (hybrid.usable) {
         if (hybrid.decision.allowed) {
