@@ -485,7 +485,7 @@ export class CapacityPreflightService {
 
   private async currentRunningApps(
     tx: Prisma.TransactionClient,
-  ): Promise<Array<{ appId: string; hardLimitBytes: bigint; replicas: number }>> {
+  ): Promise<Array<{ appId: string; hardLimitBytes: bigint; replicas: number; serviceName?: string; reverseStopFirst?: boolean }>> {
     const rows = await tx.singleApp.findMany({
       where: {
         OR: [
@@ -522,7 +522,7 @@ export class CapacityPreflightService {
     const latestSeen = new Set<string>();
     const deployedByApp = new Map<
       string,
-      { replicas: number; memoryBytes: bigint }
+      { replicas: number; memoryBytes: bigint; serviceName?: string; reverseStopFirst?: boolean }
     >();
     for (const deployment of deployments) {
       if (latestSeen.has(deployment.appGroupId)) continue;
@@ -535,6 +535,8 @@ export class CapacityPreflightService {
           deployedByApp.set(singleApp.id, {
             replicas: Math.max(0, singleApp.desiredReplicas),
             memoryBytes: BigInt(singleApp.resources.memoryBytes),
+            serviceName: singleApp.name,
+            reverseStopFirst: singleApp.updatePolicy?.order === "stop-first",
           });
         } catch {
           // Fall back to the current row below. Admission remains conservative.
@@ -557,6 +559,8 @@ export class CapacityPreflightService {
         appId: item.id,
         hardLimitBytes: memoryBytes * BigInt(replicas),
         replicas,
+        serviceName: deployed?.serviceName,
+        reverseStopFirst: deployed?.reverseStopFirst,
       }];
     });
   }
