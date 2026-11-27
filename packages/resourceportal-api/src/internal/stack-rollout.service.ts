@@ -58,7 +58,7 @@ export class StackRolloutService {
 
       // Service replica summaries omit tasks still shutting down. Keep the
       // reservation until every reachable node confirms the exact live census.
-      const tasksReady = status.success && await this.verifyStackTaskCensus(params.stackName, params.expectedServices);
+      const tasksReady = status.success && await this.verifyStackTaskCensus(params.stackName, params.expectedServices, deadline);
       if (status.success && !tasksReady) lastDetails += "\nPrevious stack tasks or node census not yet verified";
       consecutiveReady = tasksReady ? consecutiveReady + 1 : 0;
       if (consecutiveReady >= stabilityChecks) {
@@ -79,7 +79,7 @@ export class StackRolloutService {
     };
   }
 
-  private async verifyStackTaskCensus(stackName: string, expected: ExpectedService[]): Promise<boolean> {
+  private async verifyStackTaskCensus(stackName: string, expected: ExpectedService[], deadline: number): Promise<boolean> {
     if (!/^[a-z0-9_-]{1,128}$/.test(stackName)) return false;
     const context = this.config.get<string>("DOCKER_CONTEXT");
     const prefix = context ? ["--context", context] : [];
@@ -92,21 +92,23 @@ export class StackRolloutService {
       if (!id || !/^[a-z0-9]{20,40}$/.test(id) || status !== "Ready" || ids.has(id)) return false;
       ids.add(id);
     }
+    if (ids.size > 128) return false;
     const counts = new Map(expected.map(service => [service.name, 0]));
     for (const id of ids) {
+      if (Date.now() >= deadline) return false;
       const tasks = await this.runDocker([...prefix, "node", "ps", id, "--no-trunc", "--format", "{{.Name}}|{{.DesiredState}}|{{.CurrentState}}"]);
       if (tasks.exitCode !== 0) return false;
       for (const line of tasks.stdout.split("\n").filter(Boolean)) {
         const [name, desired, state] = line.split("|");
         if (!name?.startsWith(stackName + "_")) continue;
         if (!state || !desired) return false;
-        if (/^(?:Shutdown|Complete|Failed|Rejected|Remove)\b/i.test(state)) continue;
+        if (/^(?:Shutdown|Complete|Failed|Rejected)\b/i.test(state)) continue;
         const service = name.split(".")[0];
         if (!counts.has(service) || desired !== "Running" || !/^Running\b/.test(state)) return false;
         counts.set(service, (counts.get(service) ?? 0) + 1);
       }
     }
-    return expected.every(service => counts.get(service.name) === service.desiredReplicas);
+    return Date.now() <= deadline && expected.every(service => counts.get(service.name) === service.desiredReplicas);
   }
 
   /**
