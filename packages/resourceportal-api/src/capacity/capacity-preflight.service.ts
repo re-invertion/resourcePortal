@@ -148,7 +148,9 @@ export class CapacityPreflightService {
           deployed.appGroup.tenantId !== snapshot.appGroup.tenantId) {
         return this.platformUnavailable("Cannot account preceding deployment capacity");
       }
-      const old = await this.succeededRuntimeDemand(tx, deployed);
+      const live = await this.succeededRuntimeDemand(tx, deployed);
+      const restored = snapshotDemand(deployed);
+      const old = { cpuNano: live.cpuNano > restored.cpuNano ? live.cpuNano : restored.cpuNano, memoryBytes: live.memoryBytes > restored.memoryBytes ? live.memoryBytes : restored.memoryBytes };
       peakDemand = this.rolloutReservation(snapshot, candidateDemand, deployed, old);
     }
     return this.fitAdmission(
@@ -768,7 +770,13 @@ export class CapacityPreflightService {
           `Cannot account previous capacity for AppGroup ${succeeded.appGroupId}`,
         );
       }
-      if (previous) demand = await this.succeededRuntimeDemand(tx, previous);
+      if (previous) {
+        demand = await this.succeededRuntimeDemand(tx, previous);
+        if (active.length) {
+          const restored = snapshotDemand(previous);
+          demand = { cpuNano: demand.cpuNano > restored.cpuNano ? demand.cpuNano : restored.cpuNano, memoryBytes: demand.memoryBytes > restored.memoryBytes ? demand.memoryBytes : restored.memoryBytes };
+        }
+      }
       for (const row of active) {
         const parsed = this.parseSnapshot(row.stackConfig);
         if (!parsed) {
