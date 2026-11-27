@@ -670,7 +670,7 @@ describe("capacity policy validation", () => {
 });
 
 describe("worker admission evidence publication", () => {
-  it("publishes JSON-safe per-node and per-app evidence for API admission", async () => {
+  it("publishes deployed hard limits despite a smaller draft, with JSON-safe per-node and per-app evidence", async () => {
     const store = new MemoryStore();
     const now = new Date().toISOString();
     store.points.push(
@@ -712,14 +712,18 @@ describe("worker admission evidence publication", () => {
             {
               id: "existing-app",
               name: "Existing",
-              memoryBytes: 2n * GiB,
+              memoryBytes: 1n * GiB,
+              appGroupId: "group-deployed",
               actualReplicas: 1,
               desiredReplicas: 1,
             },
           ]),
       },
       appGroupDeployment: {
-        findMany: () => Promise.resolve([]),
+        findMany: (query: { where: { status: string } }) => Promise.resolve(query.where.status === "Succeeded" ? [{
+          appGroupId: "group-deployed",
+          stackConfig: JSON.stringify({ appGroup: { id: "group-deployed" }, singleApps: [{ id: "existing-app", resources: { memoryBytes: (2n * GiB).toString() } }] }),
+        }] : []),
       },
       workerReconciliationState: {
         upsert,
