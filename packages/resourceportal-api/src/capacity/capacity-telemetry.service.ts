@@ -333,6 +333,7 @@ export class CapacityTelemetryService {
     runningApps: RunningAppCapacity[];
     inFlightSnapshots: CapacityDeploymentSnapshot[];
     schedulableNodeIds: string[];
+    runtimeStart?: boolean;
   }): Promise<HybridAdmissionEvaluation> {
     await this.restorePolicy();
     const policy = this.policy();
@@ -435,6 +436,7 @@ export class CapacityTelemetryService {
       currentByApp,
       evidenceByApp,
       currentPredictionByApp,
+      input.runtimeStart,
     );
     const inFlightPredictedBytes = input.inFlightSnapshots.reduce(
       (sum, snapshot) =>
@@ -894,6 +896,7 @@ export class CapacityTelemetryService {
     currentByApp: Map<string, RunningAppCapacity>,
     evidenceByApp: Map<string, AdmissionAppEvidence>,
     currentPredictionByApp: Map<string, bigint>,
+    runtimeStart = false,
   ) {
     if (snapshot.appGroup.runtimeState !== "Running") return 0n;
     let increment = 0n;
@@ -933,7 +936,7 @@ export class CapacityTelemetryService {
       // incoming batch at the hard limit, in addition to steady-state growth.
       // Runtime-start snapshots are handled separately by the caller.
       const parallelism = app.updatePolicy?.parallelism;
-      const overlap = app.updatePolicy?.order === "start-first"
+      const overlap = !runtimeStart && app.updatePolicy?.order === "start-first"
         ? Math.min(current.replicas, targetReplicas,
             typeof parallelism === "number" && Number.isSafeInteger(parallelism) && parallelism > 0
               ? parallelism : targetReplicas)
