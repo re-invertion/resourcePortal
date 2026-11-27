@@ -130,6 +130,18 @@ describe("Stage 15 capacity preflight", () => {
     await expect(service.admitDeployment(tx, target)).resolves.toMatchObject({ success: false, errorCode: "InsufficientCapacity" });
   });
 
+  it("reserves the prior artifact even if its runtime is now stopped", async () => {
+    platform({ cpuNano: 20_000_000_000n, memoryBytes: 3_072n });
+    const old = deploymentSnapshot({ cpu: "1", memoryBytes: "4096" });
+    old.singleApps[0].id = "existing-app";
+    old.singleApps[0].name = "existing-app";
+    const target = { ...old, singleApps: [] };
+    findLatestDeployment.mockResolvedValue({ stackConfig: serializedSnapshot(old) });
+    findAppGroup.mockResolvedValue({ runtimeState: "Stopped" });
+    findSingleApps.mockResolvedValue([{ id: "existing-app", runtimeState: "Stopped", actualReplicas: 0, desiredReplicas: 1 }]);
+    await expect(service.admitDeployment(tx, target)).resolves.toMatchObject({ success: false, errorCode: "InsufficientCapacity" });
+  });
+
   it("does not offset a growing stop-first service against a shrinking service", async () => {
     platform({ cpuNano: 20_000_000_000n, memoryBytes: 6_144n });
     const old = deploymentSnapshot({ cpu: "1", memoryBytes: "4096" });
