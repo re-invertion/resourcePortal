@@ -239,6 +239,18 @@ describe("Stage 15 capacity preflight", () => {
     ).resolves.toMatchObject({ success: false, errorCode: "InsufficientCapacity" });
   });
 
+  it.each([DeploymentStatus.RollingBack, DeploymentStatus.RollbackFailed])("retains concurrent reservation during %s until newer success", async status => {
+    platform({ cpuNano: 20_000_000_000n, memoryBytes: 6_144n });
+    const id = "other-group";
+    const previous = deploymentSnapshot({ id, cpu: "1", memoryBytes: "4096" });
+    const target = deploymentSnapshot({ id, cpu: "1", memoryBytes: "2048" });
+    findDeployments.mockResolvedValue([
+      { appGroupId: id, version: 1, status: DeploymentStatus.Succeeded, phase: DeploymentPhase.Completed, stackConfig: serializedSnapshot(previous) },
+      { appGroupId: id, version: 2, status, phase: status === DeploymentStatus.RollingBack ? DeploymentPhase.RollingBack : DeploymentPhase.Completed, stackConfig: serializedSnapshot(target) },
+    ]);
+    await expect(service.admitDeployment(tx, deploymentSnapshot({ cpu: "1", memoryBytes: "1024" }))).resolves.toMatchObject({ success: false, errorCode: "InsufficientCapacity" });
+  });
+
   it("does not reserve capacity for another deployment still in Validating", async () => {
     platform({ cpuNano: 3_000_000_000n });
     const otherAppGroupId = "00000000-0000-0000-0000-000000000103";
