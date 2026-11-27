@@ -87,7 +87,7 @@ export function parseMeminfo(raw: string) {
     if (match) values.set(match[1], BigInt(match[2]) * 1024n);
   }
   const totalBytes = values.get("MemTotal");
-  const availableBytes = values.get("MemAvailable") ?? values.get("MemFree");
+  const availableBytes = values.get("MemAvailable");
   if (!totalBytes || availableBytes === undefined || availableBytes > totalBytes) {
     return null;
   }
