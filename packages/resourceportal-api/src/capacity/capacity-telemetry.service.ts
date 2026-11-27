@@ -25,6 +25,8 @@ type RunningAppCapacity = {
   appId: string;
   hardLimitBytes: bigint;
   replicas: number;
+  serviceName?: string;
+  reverseStopFirst?: boolean;
 };
 
 type AdmissionAppEvidence = {
@@ -412,7 +414,10 @@ export class CapacityTelemetryService {
     let recentOomEvents = 0n;
 
     for (const running of input.runningApps) {
-      const observed = evidenceByApp.get(running.appId);
+      const candidate = evidenceByApp.get(running.appId);
+      const observed = candidate && candidate.hardLimitBytes * BigInt(running.replicas) ===
+        running.hardLimitBytes * BigInt(candidate.replicas) ? candidate : undefined;
+      if (!observed) evidenceByApp.delete(running.appId);
       const predictedBytes = observed
         ? this.scalePrediction(
             observed.predictedBytes,
@@ -629,7 +634,7 @@ export class CapacityTelemetryService {
         }),
         this.prisma.appGroupDeployment.findMany({
           where: {
-            status: "Deploying",
+            status: { in: ["Deploying", "RollingBack"] },
             phase: {
               in: [
                 "PreparingArtifacts",
@@ -637,6 +642,7 @@ export class CapacityTelemetryService {
                 "ApplyingStack",
                 "WaitingForRollout",
                 "Cleanup",
+                "RollingBack",
               ],
             },
           },
@@ -967,6 +973,12 @@ export class CapacityTelemetryService {
 
       const current = currentByApp.get(app.id);
       if (!current) {
+        increment += targetHard;
+        continue;
+      }
+      if (!runtimeStart && (!app.name || !current.serviceName ||
+          app.name.replaceAll("-", "_") !== current.serviceName.replaceAll("-", "_") ||
+          current.reverseStopFirst !== true)) {
         increment += targetHard;
         continue;
       }
