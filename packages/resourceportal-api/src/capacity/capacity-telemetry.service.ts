@@ -680,17 +680,20 @@ export class CapacityTelemetryService {
     const groupIds = [...new Set(runningApps.map(app => app.appGroupId).filter(Boolean))];
     if (groupIds.length > 0) {
       const deployments = await this.prisma.appGroupDeployment.findMany({
-        where: { appGroupId: { in: groupIds }, status: "Succeeded" },
+        where: { appGroupId: { in: groupIds }, status: { in: ["Succeeded", "RolledBack"] } },
         orderBy: { version: "desc" },
-        select: { appGroupId: true, version: true, completedAt: true, stackConfig: true },
+        select: { appGroupId: true, version: true, completedAt: true, status: true, rollbackTargetVersion: true, stackConfig: true },
       });
       const seen = new Set<string>();
       for (const deployment of deployments) {
         if (seen.has(deployment.appGroupId)) continue;
         seen.add(deployment.appGroupId);
-        if (!deployment.stackConfig) continue;
+        const artifact = deployment.status === "RolledBack"
+          ? deployments.find(row => row.appGroupId === deployment.appGroupId && row.version === deployment.rollbackTargetVersion && row.status === "Succeeded")
+          : deployment;
+        if (!artifact?.stackConfig) continue;
         try {
-          const snapshot = JSON.parse(deployment.stackConfig) as CapacityDeploymentSnapshot;
+          const snapshot = JSON.parse(artifact.stackConfig) as CapacityDeploymentSnapshot;
           if (snapshot.appGroup.id !== deployment.appGroupId) continue;
           for (const app of snapshot.singleApps) {
             if (app.id && /^\d+$/.test(app.resources.memoryBytes)) {
