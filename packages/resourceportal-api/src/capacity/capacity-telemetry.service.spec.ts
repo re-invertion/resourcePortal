@@ -335,6 +335,23 @@ describe("Hybrid admission from worker-published telemetry", () => {
     expect(result.decision.predictedExistingGrowthBytes).toBe(BigInt(hardGiB - 1) * GiB);
   });
 
+  it("reserves restoration of stopped or removed apps for candidate and concurrent rollback", async () => {
+    const { telemetry } = admissionService([report(nodeA, 24, 0)], []);
+    const previous = snapshot(4, "removed-app");
+    const target = { ...previous, singleApps: [] };
+    const result = await telemetry.evaluateAdmission({
+      snapshot: target as never,
+      rollbackSnapshot: previous as never,
+      runningApps: [],
+      inFlightSnapshots: [{ ...target, rollbackSnapshot: previous } as never],
+      schedulableNodeIds: [nodeA],
+    });
+    expect(result.usable).toBe(true);
+    if (!result.usable) return;
+    expect(result.requestedPredictedBytes).toBe(4n * GiB);
+    expect(result.decision.inFlightPredictedBytes).toBe(4n * GiB);
+  });
+
   it("falls back when the worker-published snapshot is stale", async () => {
     const { telemetry } = admissionService(
       [report(nodeA, 20, 5)],
