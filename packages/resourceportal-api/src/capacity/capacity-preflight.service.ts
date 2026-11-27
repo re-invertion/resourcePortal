@@ -526,13 +526,15 @@ export class CapacityPreflightService {
     const deployments = await tx.appGroupDeployment.findMany({
       where: {
         appGroupId: { in: appGroupIds },
-        status: DeploymentStatus.Succeeded,
+        status: { in: [DeploymentStatus.Succeeded, DeploymentStatus.RolledBack] },
       },
       orderBy: { version: "desc" },
       select: {
         appGroupId: true,
         version: true,
         completedAt: true,
+        status: true,
+        rollbackTargetVersion: true,
         stackConfig: true,
       },
     });
@@ -544,7 +546,10 @@ export class CapacityPreflightService {
     for (const deployment of deployments) {
       if (latestSeen.has(deployment.appGroupId)) continue;
       latestSeen.add(deployment.appGroupId);
-      const parsed = this.parseSnapshot(deployment.stackConfig);
+      const artifact = deployment.status === DeploymentStatus.RolledBack
+        ? deployments.find(row => row.appGroupId === deployment.appGroupId && row.version === deployment.rollbackTargetVersion && row.status === DeploymentStatus.Succeeded)
+        : deployment;
+      const parsed = this.parseSnapshot(artifact?.stackConfig ?? null);
       if (!parsed) continue;
       for (const singleApp of parsed.singleApps) {
         if (!singleApp.id) continue;
