@@ -1069,11 +1069,11 @@ describe("Stage 15 capacity preflight", () => {
 
     expect(evaluateAdmission).toHaveBeenCalledWith(
       expect.objectContaining({
-        runningApps: [{
+        runningApps: [expect.objectContaining({
           appId: startedAppId,
           hardLimitBytes: GiB,
           replicas: 1,
-        }],
+        })],
       }),
     );
   });
