@@ -715,6 +715,29 @@ describe("Stage 15 capacity preflight", () => {
       expect(evaluateAdmission).not.toHaveBeenCalled();
     });
 
+    it("admits a stopped GPU assignment with healthy evidence but denies stale evidence (#533)", async () => {
+      nearLimitReservation();
+      const GiB = 1_073_741_824n;
+      const candidate = deploymentSnapshot({ cpu: "4", memoryBytes: String(10n * GiB) });
+      candidate.singleApps = [
+        { ...candidate.singleApps[0], id: "running-source", desiredReplicas: 1 },
+        { ...candidate.singleApps[0], id: "stopped-destination", runtimeState: "Stopped", desiredReplicas: 1,
+          resources: { cpu: "5", memoryBytes: String(24n * GiB), gpu: 1 } },
+      ];
+      platform({ cpuNano: 10_000_000_000n, memoryBytes: 67_417_341_952n });
+      findDeployments.mockResolvedValue([{ appGroupId: "other-group", version: 1,
+        status: DeploymentStatus.Succeeded, phase: DeploymentPhase.Completed,
+        stackConfig: serializedSnapshot(deploymentSnapshot({ id: "other-group", cpu: "1", memoryBytes: "60129542144" })),
+      }]);
+      const evaluateAdmission = vi.fn().mockResolvedValueOnce({ usable: true, decision: { allowed: true } })
+        .mockResolvedValueOnce({ usable: false, reason: "fresh worker-published Hybrid admission telemetry is unavailable" });
+      service = new CapacityPreflightService({ evaluateAdmission } as never, { current: () => ({ mode: "Hybrid" }) } as never);
+      await expect(service.admitDeployment(tx, candidate)).resolves.toMatchObject({ success: true, demand: { memoryBytes: 10n * GiB } });
+      const stale = await service.admitDeployment(tx, candidate);
+      expect(stale).toMatchObject({ success: false, errorCode: "InsufficientCapacity" });
+      if (!stale.success) expect(stale.message).toContain("WorkerTelemetryUnavailableOrStale");
+    });
+
     it("reports telemetry unavailable/stale reason without bypassing strict reservation limits", async () => {
       nearLimitReservation();
       const evaluateAdmission = vi.fn().mockResolvedValue({
