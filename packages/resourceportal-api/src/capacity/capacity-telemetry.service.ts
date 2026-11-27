@@ -931,7 +931,16 @@ export class CapacityTelemetryService {
             targetHard,
           )
         : targetHard;
-      const growth = target > baseline ? target - baseline : 0n;
+      // Historical observations cannot predict consumption enabled by a
+      // newly increased per-replica limit. Reserve that additional limit
+      // conservatively, without counting existing predicted usage twice.
+      const currentUnit = current.hardLimitBytes / BigInt(Math.max(1, current.replicas));
+      const targetUnit = BigInt(app.resources.memoryBytes);
+      const limitGrowth = targetUnit > currentUnit
+        ? (targetUnit - currentUnit) * BigInt(targetReplicas)
+        : 0n;
+      const predictedGrowth = target > baseline ? target - baseline : 0n;
+      const growth = predictedGrowth > limitGrowth ? predictedGrowth : limitGrowth;
       // Explicit start-first may overlap old and new tasks. Reserve the
       // incoming batch at the hard limit, in addition to steady-state growth.
       // Runtime-start snapshots are handled separately by the caller.
