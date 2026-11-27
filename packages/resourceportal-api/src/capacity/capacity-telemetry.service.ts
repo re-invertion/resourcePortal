@@ -349,6 +349,7 @@ export class CapacityTelemetryService {
     inFlightSnapshots: CapacityDeploymentSnapshot[];
     schedulableNodeIds: string[];
     runtimeStart?: boolean;
+    rollbackSnapshot?: CapacityDeploymentSnapshot;
   }): Promise<HybridAdmissionEvaluation> {
     await this.restorePolicy();
     const policy = this.policy();
@@ -450,13 +451,23 @@ export class CapacityTelemetryService {
         ? 0
         : Math.min(...predictions.map((item) => item.confidence));
 
-    const requestedPredictedBytes = this.incrementalPrediction(
+    let requestedPredictedBytes = this.incrementalPrediction(
       input.snapshot,
       currentByApp,
       evidenceByApp,
       currentPredictionByApp,
       input.runtimeStart,
     );
+    // A previous artifact may restore stopped or removed services. Its
+    // declared demand is not necessarily represented by the running baseline.
+    if (input.rollbackSnapshot?.appGroup.runtimeState === "Running") {
+      for (const app of input.rollbackSnapshot.singleApps) {
+        if (app.runtimeState !== "Running" || app.desiredReplicas <= 0) continue;
+        const restored = BigInt(app.resources.memoryBytes) * BigInt(app.desiredReplicas);
+        const live = app.id ? currentByApp.get(app.id)?.hardLimitBytes ?? 0n : 0n;
+        if (restored > live) requestedPredictedBytes += restored - live;
+      }
+    }
     const inFlightPredictedBytes = input.inFlightSnapshots.reduce(
       (sum, snapshot) =>
         sum +
