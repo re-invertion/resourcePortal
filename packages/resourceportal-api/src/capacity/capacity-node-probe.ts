@@ -414,6 +414,20 @@ export async function probeSwarmNodeCapacity(
     }
   }
 
+  // Identity revalidation alone cannot detect newly started containers.
+  // Repeat the full labeled inventory, including the initially empty case.
+  const finalInventory = await runDocker(
+    ["ps", "--no-trunc", "--filter", "label=resourceportal.single-app-id",
+      "--format", '{{.ID}}\t{{.Label "resourceportal.single-app-id"}}'],
+    5_000,
+  );
+  const finalRows = finalInventory === null ? null : parseContainerRows(finalInventory);
+  const initialById = new Map(containerRows.map(row => [row.id, row.appId]));
+  if (!finalRows?.success || finalRows.rows.length !== containerRows.length ||
+      finalRows.rows.some(row => initialById.get(row.id) !== row.appId)) {
+    return { status: "Unavailable", swarmNodeId: nodeId, reason: "ContainerInventoryChanged" };
+  }
+
   const pressure = parsePressure(pressureRaw);
   return {
     status: "Observed",
