@@ -326,6 +326,12 @@ export class CapacityTelemetryService {
       });
     }
 
+    // Collection time is part of evidence age, not a fresh timestamp
+    // assigned after a slow probe. Do not publish an already expired census.
+    const ageMs = Date.now() - Date.parse(observedAt);
+    if (ageMs < 0 || ageMs >= this.policy().maxTelemetryAgeSeconds * 1000) {
+      throw new Error("Swarm capacity telemetry expired during collection");
+    }
     await this.store.append(points, this.policy());
     return points;
   }
