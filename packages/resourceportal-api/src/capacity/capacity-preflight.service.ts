@@ -37,6 +37,7 @@ export type CapacityDeploymentSnapshot = {
     tenantId: string;
     runtimeState: string;
   };
+  rollbackSnapshot?: CapacityDeploymentSnapshot;
   singleApps: Array<
     CapacitySnapshotSingleApp & {
       id?: string;
@@ -593,16 +594,27 @@ export class CapacityPreflightService {
       },
       select: { stackConfig: true, appGroupId: true, version: true, status: true },
     });
-    const failed = rows.filter(row => row.status === DeploymentStatus.RollbackFailed || row.status === DeploymentStatus.Failed);
-    const latestSucceeded = failed.length ? await tx.appGroupDeployment.findMany({
-      where: { appGroupId: { in: failed.map(row => row.appGroupId) }, status: DeploymentStatus.Succeeded },
-      select: { appGroupId: true, version: true },
+    const groupIds = [...new Set(rows.map(row => row.appGroupId).filter(Boolean))];
+    const successes = groupIds.length ? await tx.appGroupDeployment.findMany({
+      where: { appGroupId: { in: groupIds }, status: DeploymentStatus.Succeeded },
+      orderBy: { version: "desc" },
+      select: { appGroupId: true, version: true, stackConfig: true },
     }) : [];
-    const snapshots = rows.filter(row => (row.status !== DeploymentStatus.RollbackFailed && row.status !== DeploymentStatus.Failed) ||
-      !latestSucceeded.some(success => success.appGroupId === row.appGroupId && success.version > row.version)
-    ).map((row) => this.parseSnapshot(row.stackConfig));
-    if (snapshots.some(row => row === null)) return null;
-    return snapshots.filter((row): row is CapacityDeploymentSnapshot => row !== null);
+    const snapshots: CapacityDeploymentSnapshot[] = [];
+    for (const row of rows) {
+      const previous = successes.find(success => success.appGroupId === row.appGroupId);
+      if (previous && previous.version > row.version) continue;
+      const snapshot = this.parseSnapshot(row.stackConfig);
+      if (!snapshot) return null;
+      if (previous) {
+        const rollback = this.parseSnapshot(previous.stackConfig);
+        if (!rollback || rollback.appGroup.id !== snapshot.appGroup.id ||
+            rollback.appGroup.tenantId !== snapshot.appGroup.tenantId) return null;
+        snapshot.rollbackSnapshot = rollback;
+      }
+      snapshots.push(snapshot);
+    }
+    return snapshots;
   }
 
   private async platformCapacity(tx: Prisma.TransactionClient) {
