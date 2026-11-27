@@ -145,7 +145,7 @@ export class CapacityPreflightService {
         return this.platformUnavailable("Cannot account preceding deployment capacity");
       }
       const old = await this.succeededRuntimeDemand(tx, deployed);
-      peakDemand = this.rolloutReservation(snapshot, candidateDemand, old);
+      peakDemand = this.rolloutReservation(snapshot, candidateDemand, deployed, old);
     }
     return this.fitAdmission(
       tx,
@@ -757,7 +757,7 @@ export class CapacityPreflightService {
           );
         }
         const oldDemand = await this.succeededRuntimeDemand(tx, previous);
-        demand = this.rolloutReservation(parsed, demand, oldDemand);
+        demand = this.rolloutReservation(parsed, demand, previous, oldDemand);
       }
       occupied = {
         cpuNano: occupied.cpuNano + demand.cpuNano,
@@ -768,17 +768,38 @@ export class CapacityPreflightService {
     return { success: true, occupied };
   }
 
-  private rolloutReservation(snapshot: CapacityDeploymentSnapshot, target: CapacityDemand, previous: CapacityDemand): CapacityDemand {
-    // Conservatively reserve both stacks for explicit start-first updates.
-    // Stop-first retains the previous allocation until completion.
-    const overlaps = snapshot.appGroup.runtimeState === "Running" &&
-      snapshot.singleApps.some(app => app.runtimeState === "Running" &&
-        app.desiredReplicas > 0 && app.updatePolicy?.order === "start-first");
+  private rolloutReservation(
+    snapshot: CapacityDeploymentSnapshot,
+    target: CapacityDemand,
+    deployed: CapacityDeploymentSnapshot,
+    previous: CapacityDemand,
+  ): CapacityDemand {
+    // A group-wide maximum alone is unsafe when some services grow while
+    // others shrink. Without proof of an ordered replacement, reserve both
+    // allocations. Credit the old allocation only for a structurally
+    // non-increasing, explicit stop-first replacement of the same services.
+    const oldById = new Map(deployed.singleApps.map(app => [app.id, app]));
+    const nonIncreasing = snapshot.appGroup.runtimeState === "Running" &&
+      deployed.appGroup.runtimeState === "Running" &&
+      snapshot.singleApps.length === deployed.singleApps.length &&
+      oldById.size === deployed.singleApps.length &&
+      new Set(snapshot.singleApps.map(app => app.id)).size === snapshot.singleApps.length &&
+      snapshot.singleApps.every(app => {
+        const old = oldById.get(app.id);
+        if (!app.id || !old || app.updatePolicy?.order !== "stop-first" ||
+            app.runtimeState !== old.runtimeState ||
+            app.desiredReplicas > old.desiredReplicas ||
+            app.resources.gpu !== old.resources.gpu) return false;
+        const nextUnit = snapshotDemand({ appGroup: { runtimeState: "Running" },
+          singleApps: [{ ...app, runtimeState: "Running", desiredReplicas: 1 }] });
+        const oldUnit = snapshotDemand({ appGroup: { runtimeState: "Running" },
+          singleApps: [{ ...old, runtimeState: "Running", desiredReplicas: 1 }] });
+        return nextUnit.cpuNano <= oldUnit.cpuNano &&
+          nextUnit.memoryBytes <= oldUnit.memoryBytes;
+      });
     return {
-      cpuNano: overlaps ? target.cpuNano + previous.cpuNano :
-        target.cpuNano > previous.cpuNano ? target.cpuNano : previous.cpuNano,
-      memoryBytes: overlaps ? target.memoryBytes + previous.memoryBytes :
-        target.memoryBytes > previous.memoryBytes ? target.memoryBytes : previous.memoryBytes,
+      cpuNano: nonIncreasing ? (target.cpuNano > previous.cpuNano ? target.cpuNano : previous.cpuNano) : target.cpuNano + previous.cpuNano,
+      memoryBytes: nonIncreasing ? (target.memoryBytes > previous.memoryBytes ? target.memoryBytes : previous.memoryBytes) : target.memoryBytes + previous.memoryBytes,
     };
   }
 
