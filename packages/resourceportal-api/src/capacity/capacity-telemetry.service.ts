@@ -475,8 +475,8 @@ export class CapacityTelemetryService {
 
     const denied = decisions.find((item) => !item.allowed);
     const mostConstrained = [...decisions].sort((a, b) => {
-      const aHeadroom = a.remainingAfterAdmissionBytes - a.safetyReserveBytes;
-      const bHeadroom = b.remainingAfterAdmissionBytes - b.safetyReserveBytes;
+      const aHeadroom = a.deployableHeadroomBytes ?? 0n;
+      const bHeadroom = b.deployableHeadroomBytes ?? 0n;
       return aHeadroom < bHeadroom ? -1 : aHeadroom > bHeadroom ? 1 : 0;
     })[0];
     const selected = denied ?? mostConstrained;
