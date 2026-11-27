@@ -110,6 +110,7 @@ describe("Stage 15 capacity preflight", () => {
       platform({ cpuNano: 8_000_000_000n, memoryBytes: 3_072n });
       const snapshot = deploymentSnapshot();
       snapshot.singleApps[0].id = "existing-app";
+      snapshot.singleApps[0].name = "existing-app";
       snapshot.singleApps[0].updatePolicy = { order };
       findLatestDeployment.mockResolvedValue({ stackConfig: serializedSnapshot(snapshot) });
       const result = await service.admitDeployment(tx, snapshot);
@@ -117,6 +118,17 @@ describe("Stage 15 capacity preflight", () => {
       if (result.success) expect(result.demand.memoryBytes).toBe(2_048n);
     },
   );
+
+  it.each(["rename", "reverse-start-first"] as const)("reserves both stacks for %s", async scenario => {
+    platform({ cpuNano: 8_000_000_000n, memoryBytes: 3_072n });
+    const old = deploymentSnapshot();
+    Object.assign(old.singleApps[0], { id: "existing", name: "old-name", updatePolicy: { order: scenario === "rename" ? "stop-first" : "start-first" } });
+    const target = structuredClone(old);
+    target.singleApps[0].updatePolicy = { order: "stop-first" };
+    if (scenario === "rename") target.singleApps[0].name = "new-name";
+    findLatestDeployment.mockResolvedValue({ stackConfig: serializedSnapshot(old) });
+    await expect(service.admitDeployment(tx, target)).resolves.toMatchObject({ success: false, errorCode: "InsufficientCapacity" });
+  });
 
   it("does not offset a growing stop-first service against a shrinking service", async () => {
     platform({ cpuNano: 20_000_000_000n, memoryBytes: 6_144n });
@@ -745,8 +757,9 @@ describe("Stage 15 capacity preflight", () => {
       platform({ cpuNano: 20_000_000_000n, memoryBytes: 67_417_341_952n });
       const old = deploymentSnapshot({ cpu: "1", memoryBytes: String(2n * GiB) });
       old.singleApps[0].id = "wrapper";
+      old.singleApps[0].name = "wrapper";
       old.singleApps[0].updatePolicy = { order: "stop-first" };
-      old.singleApps.push({ ...old.singleApps[0], id: "browser" });
+      old.singleApps.push({ ...old.singleApps[0], id: "browser", name: "browser" });
       findLatestDeployment.mockResolvedValue({ stackConfig: serializedSnapshot(old) });
       findDeployments.mockResolvedValueOnce([{
         appGroupId: "other-group", version: 1, status: DeploymentStatus.Succeeded, phase: DeploymentPhase.Completed,
