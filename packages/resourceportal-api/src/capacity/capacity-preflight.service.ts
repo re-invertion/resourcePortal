@@ -22,6 +22,7 @@ const ADMITTED_PHASES = new Set<DeploymentPhase>([
   DeploymentPhase.ApplyingStack,
   DeploymentPhase.WaitingForRollout,
   DeploymentPhase.Cleanup,
+  DeploymentPhase.RollingBack,
 ]);
 
 export type CapacityErrorCode =
@@ -37,6 +38,7 @@ export type CapacityDeploymentSnapshot = {
   singleApps: Array<
     CapacitySnapshotSingleApp & {
       id?: string;
+      name?: string;
       volumes: Array<{ volumeId: string }>;
       updatePolicy?: { order?: unknown; parallelism?: unknown };
     }
@@ -566,7 +568,7 @@ export class CapacityPreflightService {
     const rows = await tx.appGroupDeployment.findMany({
       where: {
         ...(excludedAppGroupId ? { appGroupId: { not: excludedAppGroupId } } : {}),
-        status: DeploymentStatus.Deploying,
+        status: { in: [DeploymentStatus.Deploying, DeploymentStatus.RollingBack] },
         phase: { in: Array.from(ADMITTED_PHASES) },
       },
       select: { stackConfig: true },
@@ -707,6 +709,7 @@ export class CapacityPreflightService {
         OR: [
           { status: DeploymentStatus.Succeeded },
           { status: DeploymentStatus.Deploying },
+          { status: DeploymentStatus.RollingBack },
         ],
       },
       select: {
@@ -730,7 +733,7 @@ export class CapacityPreflightService {
       const active = rows
         .filter(
           (row) =>
-            row.status === DeploymentStatus.Deploying &&
+            (row.status === DeploymentStatus.Deploying || row.status === DeploymentStatus.RollingBack) &&
             ADMITTED_PHASES.has(row.phase),
         )
         .sort((a, b) => b.version - a.version)[0];
@@ -792,7 +795,9 @@ export class CapacityPreflightService {
       new Set(snapshot.singleApps.map(app => app.id)).size === snapshot.singleApps.length &&
       snapshot.singleApps.every(app => {
         const old = oldById.get(app.id);
-        if (!app.id || !old || app.updatePolicy?.order !== "stop-first" ||
+        if (!app.id || !old || !app.name || !old.name ||
+            app.name.replaceAll("-", "_") !== old.name.replaceAll("-", "_") ||
+            app.updatePolicy?.order !== "stop-first" || old.updatePolicy?.order !== "stop-first" ||
             app.runtimeState !== old.runtimeState ||
             app.desiredReplicas > old.desiredReplicas ||
             app.resources.gpu !== old.resources.gpu) return false;
