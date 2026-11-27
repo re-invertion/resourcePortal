@@ -664,9 +664,12 @@ describe("Stage 15 capacity preflight", () => {
       }]);
     }
 
-    it("rejects unreadable in-flight reservations before evaluating Hybrid capacity", async () => {
+    it.each(["invalid JSON", JSON.stringify({
+      appGroup: { id: "other-group", runtimeState: "Running" },
+      singleApps: [{ runtimeState: "Running", desiredReplicas: -1, resources: { memoryBytes: "1024" }, volumes: [] }],
+    })])("rejects unreadable in-flight reservations before evaluating Hybrid capacity (%s)", async invalidSnapshot => {
       platform();
-      findDeployments.mockResolvedValueOnce([]).mockResolvedValueOnce([{ stackConfig: "invalid JSON" }]);
+      findDeployments.mockResolvedValueOnce([]).mockResolvedValueOnce([{ stackConfig: invalidSnapshot }]);
       const evaluateAdmission = vi.fn();
       service = new CapacityPreflightService(
         { evaluateAdmission } as never,
