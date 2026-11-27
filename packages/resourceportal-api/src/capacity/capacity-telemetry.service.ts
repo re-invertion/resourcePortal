@@ -522,9 +522,20 @@ export class CapacityTelemetryService {
       !Array.isArray(state.lastResult)
         ? (state.lastResult as Record<string, unknown>)
         : {};
+    // Published diagnostic values are historical, not permission to deploy.
+    const policy = this.policy();
+    const evidence = this.parseAdmissionEvidence(result.admissionEvidence);
+    const age = state?.lastSuccessAt ? Date.now() - state.lastSuccessAt.getTime() : Infinity;
+    const fresh = age >= 0 && age <= policy.maxTelemetryAgeSeconds * 1000 &&
+      evidence !== null && evidence.nodes.length > 0 &&
+      evidence.nodes.every(node => {
+        const nodeAge = Date.now() - Date.parse(node.observedAt);
+        return nodeAge >= 0 && nodeAge <= policy.maxTelemetryAgeSeconds * 1000;
+      });
     return {
       ...result,
-      policy: this.policyService.serialize(this.policy()),
+      telemetryFresh: fresh,
+      policy: this.policyService.serialize(policy),
       telemetryState: state
         ? {
             lastCompletedAt: state.lastCompletedAt,
