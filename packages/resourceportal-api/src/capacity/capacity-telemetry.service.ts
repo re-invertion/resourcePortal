@@ -169,9 +169,10 @@ export class CapacityTelemetryService {
       this.schedulableNodeIds(),
       this.prisma.singleApp.findMany({
         where: {
-          runtimeState: "Running",
-          pendingDeletion: false,
-          appGroup: { runtimeState: "Running" },
+          OR: [
+            { runtimeState: "Running", pendingDeletion: false, appGroup: { runtimeState: "Running" } },
+            { actualReplicas: { gt: 0 } },
+          ],
         },
         select: { id: true, actualReplicas: true },
       }),
@@ -216,9 +217,10 @@ export class CapacityTelemetryService {
       }
       observedContainerIds.add(container.id);
       if (!expectedReplicaCounts.has(container.appId)) {
-        throw new Error(
-          "application replica telemetry does not match observed runtime replicas",
-        );
+        // A task can start between the runtime reconciliation and the node
+        // census. Reject this sample, but permit the same bounded full retry
+        // as a missing replica. Never accept an unknown application sample.
+        throw new IncompleteReplicaTelemetryError(0, 1);
       }
       observedReplicaCounts.set(
         container.appId,
