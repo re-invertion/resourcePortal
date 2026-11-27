@@ -27,10 +27,12 @@ type RunningAppCapacity = {
   replicas: number;
   serviceName?: string;
   reverseStopFirst?: boolean;
+  generation?: string;
 };
 
 type AdmissionAppEvidence = {
   appId: string;
+  generation?: string;
   replicas: number;
   hardLimitBytes: bigint;
   predictedBytes: bigint;
@@ -415,7 +417,8 @@ export class CapacityTelemetryService {
 
     for (const running of input.runningApps) {
       const candidate = evidenceByApp.get(running.appId);
-      const observed = candidate && candidate.hardLimitBytes * BigInt(running.replicas) ===
+      const observed = candidate && running.generation !== undefined &&
+        candidate.generation === running.generation && candidate.hardLimitBytes * BigInt(running.replicas) ===
         running.hardLimitBytes * BigInt(candidate.replicas) ? candidate : undefined;
       if (!observed) evidenceByApp.delete(running.appId);
       const predictedBytes = observed
@@ -656,12 +659,13 @@ export class CapacityTelemetryService {
     // Use the successful stack snapshot for predictions, retaining the larger
     // value when the inventory is uncertain.
     const deployedLimits = new Map<string, bigint>();
+    const generations = new Map<string, { key: string; completedAt: number }>();
     const groupIds = [...new Set(runningApps.map(app => app.appGroupId).filter(Boolean))];
     if (groupIds.length > 0) {
       const deployments = await this.prisma.appGroupDeployment.findMany({
         where: { appGroupId: { in: groupIds }, status: "Succeeded" },
         orderBy: { version: "desc" },
-        select: { appGroupId: true, stackConfig: true },
+        select: { appGroupId: true, version: true, completedAt: true, stackConfig: true },
       });
       const seen = new Set<string>();
       for (const deployment of deployments) {
@@ -674,6 +678,10 @@ export class CapacityTelemetryService {
           for (const app of snapshot.singleApps) {
             if (app.id && /^\d+$/.test(app.resources.memoryBytes)) {
               deployedLimits.set(app.id, BigInt(app.resources.memoryBytes));
+              if (deployment.completedAt) generations.set(app.id, {
+                key: `${deployment.appGroupId}:${deployment.version}:${deployment.completedAt.toISOString()}`,
+                completedAt: deployment.completedAt.getTime(),
+              });
             }
           }
         } catch {
@@ -709,7 +717,9 @@ export class CapacityTelemetryService {
     });
     const sampledReplicaCounts = new Map<string, number>();
     const admissionPredictions = runningApps.map((app) => {
-      const history = histories.get(app.id) ?? [];
+      const generation = generations.get(app.id);
+      if (!generation) return null;
+      const history = (histories.get(app.id) ?? []).filter(sample => Date.parse(sample.observedAt) > generation.completedAt);
       const latestSample = [...history].sort(
         (left, right) =>
           Date.parse(right.observedAt) - Date.parse(left.observedAt),
@@ -847,6 +857,7 @@ export class CapacityTelemetryService {
           if (replicas <= 0 || !prediction) return [];
           return [{
             appId: app.id,
+            generation: generations.get(app.id)?.key,
             replicas,
             hardLimitBytes: (
               limitFor(app) * BigInt(replicas)
@@ -1166,6 +1177,7 @@ export class CapacityTelemetryService {
       appIds.add(app.appId);
       apps.push({
         appId: app.appId,
+        generation: typeof app.generation === "string" && app.generation.length <= 256 ? app.generation : undefined,
         replicas: Number(app.replicas),
         hardLimitBytes,
         predictedBytes,
