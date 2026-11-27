@@ -74,6 +74,7 @@ type DeploymentReservationRow = {
   version: number;
   status: DeploymentStatus;
   phase: DeploymentPhase;
+  rollbackTargetVersion?: number | null;
   stackConfig: string | null;
 };
 
@@ -606,14 +607,18 @@ export class CapacityPreflightService {
     });
     const groupIds = [...new Set(rows.map(row => row.appGroupId).filter(Boolean))];
     const successes = groupIds.length ? await tx.appGroupDeployment.findMany({
-      where: { appGroupId: { in: groupIds }, status: DeploymentStatus.Succeeded },
+      where: { appGroupId: { in: groupIds }, status: { in: [DeploymentStatus.Succeeded, DeploymentStatus.RolledBack] } },
       orderBy: { version: "desc" },
-      select: { appGroupId: true, version: true, stackConfig: true },
+      select: { appGroupId: true, version: true, status: true, rollbackTargetVersion: true, stackConfig: true },
     }) : [];
     const snapshots: CapacityDeploymentSnapshot[] = [];
     for (const row of rows) {
-      const previous = successes.find(success => success.appGroupId === row.appGroupId);
-      if (previous && previous.version > row.version) continue;
+      const boundary = successes.find(success => success.appGroupId === row.appGroupId);
+      const previous = boundary?.status === DeploymentStatus.RolledBack
+        ? successes.find(success => success.appGroupId === row.appGroupId && success.status === DeploymentStatus.Succeeded && success.version === boundary.rollbackTargetVersion)
+        : boundary;
+      if (boundary && !previous) return null;
+      if (boundary && boundary.version > row.version) continue;
       const snapshot = this.parseSnapshot(row.stackConfig);
       if (!snapshot) return null;
       if (previous) {
@@ -756,6 +761,7 @@ export class CapacityPreflightService {
       where: {
         OR: [
           { status: DeploymentStatus.Succeeded },
+          { status: DeploymentStatus.RolledBack },
           { status: DeploymentStatus.Deploying },
           { status: DeploymentStatus.RollingBack },
           { status: DeploymentStatus.RollbackFailed },
@@ -767,6 +773,7 @@ export class CapacityPreflightService {
         version: true,
         status: true,
         phase: true,
+        rollbackTargetVersion: true,
         stackConfig: true,
       },
     });
@@ -780,11 +787,15 @@ export class CapacityPreflightService {
 
     let occupied: CapacityDemand = { cpuNano: 0n, memoryBytes: 0n };
     for (const rows of byAppGroup.values()) {
-      const succeeded = rows
-        .filter(row => row.status === DeploymentStatus.Succeeded)
+      const boundary = rows
+        .filter(row => row.status === DeploymentStatus.Succeeded || row.status === DeploymentStatus.RolledBack)
         .sort((a, b) => b.version - a.version)[0];
+      const succeeded = boundary?.status === DeploymentStatus.RolledBack
+        ? rows.find(row => row.status === DeploymentStatus.Succeeded && row.version === boundary.rollbackTargetVersion)
+        : boundary;
+      if (boundary && !succeeded) return this.platformUnavailable(`Cannot account restored capacity for AppGroup ${boundary.appGroupId}`);
       const active = rows.filter(row =>
-        (!succeeded || row.version > succeeded.version) &&
+        (!boundary || row.version > boundary.version) &&
         (row.status === DeploymentStatus.RollbackFailed ||
           (row.status === DeploymentStatus.Failed && POSSIBLY_APPLIED_PHASES.includes(row.phase)) ||
           ((row.status === DeploymentStatus.Deploying || row.status === DeploymentStatus.RollingBack) &&
