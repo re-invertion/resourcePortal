@@ -367,7 +367,7 @@ describe("Hybrid admission from worker-published telemetry", () => {
     expect(result.requestedPredictedBytes).toBe(2n * GiB);
   });
 
-  it("does not reserve hard-limit growth twice when replica count is unchanged", async () => {
+  it("reserves newly enabled hard-limit growth when replica count is unchanged", async () => {
     const { telemetry } = admissionService(
       [report(nodeA, 16, 1)],
       [appEvidence("existing-app", 1, 2, 1)],
@@ -386,7 +386,7 @@ describe("Hybrid admission from worker-published telemetry", () => {
     });
     expect(result.usable).toBe(true);
     if (!result.usable) return;
-    expect(result.requestedPredictedBytes).toBe(0n);
+    expect(result.requestedPredictedBytes).toBe(2n * GiB);
     expect(result.decision.allowed).toBe(true);
   });
 });
