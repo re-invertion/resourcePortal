@@ -15,6 +15,8 @@ import { CurrentUser } from "../auth/current-user.decorator";
 import { PlatformAdminGuard } from "../auth/platform-admin.guard";
 import { AuthenticatedUser } from "../auth/types";
 import { OperationsService } from "../operations/operations.service";
+import { PrismaService } from "../prisma/prisma.service";
+import { CapacityPreflightService } from "../capacity/capacity-preflight.service";
 import { CapacityTelemetryService } from "../capacity/capacity-telemetry.service";
 import { RequestPlatformUpdateDto } from "./dto/request-platform-update.dto";
 import { SetRemoteLocationMaintenanceDto } from "./dto/set-maintenance.dto";
@@ -31,6 +33,8 @@ export class PlatformInfrastructureController {
     private readonly releases: PlatformReleaseService,
     private readonly capacity: CapacityTelemetryService,
     @Optional() private readonly gpu?: NvidiaGpuAllocationService,
+    @Optional() private readonly preflight?: CapacityPreflightService,
+    @Optional() private readonly prisma?: PrismaService,
   ) {}
 
   @Get("release")
@@ -119,8 +123,12 @@ export class PlatformInfrastructureController {
   }
 
   @Get("capacity")
-  getCapacityDiagnostics() {
-    return this.capacity.diagnostics();
+  async getCapacityDiagnostics() {
+    const diagnostics = await this.capacity.diagnostics();
+    const hybridBudget = this.preflight && this.prisma
+      ? await this.prisma.$transaction(tx => this.preflight!.hybridBudget(tx))
+      : null;
+    return { ...diagnostics, hybridBudget };
   }
 
   @Patch("capacity/settings")
