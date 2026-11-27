@@ -615,6 +615,7 @@ export class CapacityTelemetryService {
             memoryBytes: true,
             actualReplicas: true,
             desiredReplicas: true,
+            appGroupId: true,
           },
         }),
         this.prisma.appGroupDeployment.findMany({
@@ -636,6 +637,40 @@ export class CapacityTelemetryService {
         this.store.observationCount(),
       ]);
 
+    // The draft memory field can differ from the last deployed allocation.
+    // Use the successful stack snapshot for predictions, retaining the larger
+    // value when the inventory is uncertain.
+    const deployedLimits = new Map<string, bigint>();
+    const groupIds = [...new Set(runningApps.map(app => app.appGroupId).filter(Boolean))];
+    if (groupIds.length > 0) {
+      const deployments = await this.prisma.appGroupDeployment.findMany({
+        where: { appGroupId: { in: groupIds }, status: "Succeeded" },
+        orderBy: { version: "desc" },
+        select: { appGroupId: true, stackConfig: true },
+      });
+      const seen = new Set<string>();
+      for (const deployment of deployments) {
+        if (seen.has(deployment.appGroupId)) continue;
+        seen.add(deployment.appGroupId);
+        if (!deployment.stackConfig) continue;
+        try {
+          const snapshot = JSON.parse(deployment.stackConfig) as CapacityDeploymentSnapshot;
+          if (snapshot.appGroup.id !== deployment.appGroupId) continue;
+          for (const app of snapshot.singleApps) {
+            if (app.id && /^\d+$/.test(app.resources.memoryBytes)) {
+              deployedLimits.set(app.id, BigInt(app.resources.memoryBytes));
+            }
+          }
+        } catch {
+          // Missing or malformed snapshots must not suppress existing limits.
+        }
+      }
+    }
+    const limitFor = (app: { id: string; memoryBytes: bigint }) => {
+      const deployed = deployedLimits.get(app.id);
+      return deployed !== undefined && deployed > app.memoryBytes ? deployed : app.memoryBytes;
+    };
+
     const historySince =
       Date.now() - policy.rareEventRetentionDays * 86_400_000;
     const histories = new Map<string, MemoryObservation[]>(
@@ -648,7 +683,7 @@ export class CapacityTelemetryService {
     );
     const predictions = runningApps.map((app) => {
       const hard =
-        app.memoryBytes *
+        limitFor(app) *
         BigInt(Math.max(0, app.actualReplicas || app.desiredReplicas));
       return predictAppMemory(
         app.id,
@@ -682,7 +717,7 @@ export class CapacityTelemetryService {
       return predictAppMemory(
         app.id,
         history,
-        app.memoryBytes * BigInt(replicas),
+        limitFor(app) * BigInt(replicas),
         policy,
       );
     });
@@ -727,7 +762,7 @@ export class CapacityTelemetryService {
     const hardLimitBytes = runningApps.reduce(
       (sum, app) =>
         sum +
-        app.memoryBytes *
+        limitFor(app) *
           BigInt(Math.max(0, app.actualReplicas || app.desiredReplicas)),
       0n,
     );
@@ -799,7 +834,7 @@ export class CapacityTelemetryService {
             appId: app.id,
             replicas,
             hardLimitBytes: (
-              app.memoryBytes * BigInt(replicas)
+              limitFor(app) * BigInt(replicas)
             ).toString(),
             predictedBytes: prediction.predictedBytes.toString(),
             confidence: prediction.confidence,
