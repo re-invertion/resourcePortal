@@ -528,8 +528,18 @@ export class CapacityPreflightService {
     const rows = await tx.$queryRaw<PlatformCapacityRow[]>(Prisma.sql`
       SELECT
         c."health"::text AS "health",
-        COALESCE(SUM(r."availableCpuNano"), 0)::bigint AS "availableCpuNano",
-        COALESCE(SUM(r."availableMemoryBytes"), 0)::bigint AS "availableMemoryBytes",
+        COALESCE(SUM(r."availableCpuNano") FILTER (
+          WHERE r."status" = 'Ready'
+            AND r."availability" = 'Active'
+            AND r."maintenance" = false
+            AND r."health" IN ('Healthy', 'Degraded')
+        ), 0)::bigint AS "availableCpuNano",
+        COALESCE(SUM(r."availableMemoryBytes") FILTER (
+          WHERE r."status" = 'Ready'
+            AND r."availability" = 'Active'
+            AND r."maintenance" = false
+            AND r."health" IN ('Healthy', 'Degraded')
+        ), 0)::bigint AS "availableMemoryBytes",
         COUNT(*) FILTER (
           WHERE r."status" = 'Ready'
             AND r."availability" = 'Active'
