@@ -56,7 +56,11 @@ export class StackRolloutService {
       const status = this.evaluateServices(rows, params.expectedServices);
       lastDetails = status.details;
 
-      consecutiveReady = status.success ? consecutiveReady + 1 : 0;
+      // Service replica summaries omit tasks still shutting down. Keep the
+      // reservation until every reachable node confirms the exact live census.
+      const tasksReady = status.success && await this.verifyStackTaskCensus(params.stackName, params.expectedServices);
+      if (status.success && !tasksReady) lastDetails += "\nPrevious stack tasks or node census not yet verified";
+      consecutiveReady = tasksReady ? consecutiveReady + 1 : 0;
       if (consecutiveReady >= stabilityChecks) {
         return {
           success: true,
@@ -73,6 +77,36 @@ export class StackRolloutService {
       message: "Rollout timed out",
       details: lastDetails || "No rollout status available",
     };
+  }
+
+  private async verifyStackTaskCensus(stackName: string, expected: ExpectedService[]): Promise<boolean> {
+    if (!/^[a-z0-9_-]{1,128}$/.test(stackName)) return false;
+    const context = this.config.get<string>("DOCKER_CONTEXT");
+    const prefix = context ? ["--context", context] : [];
+    const nodes = await this.runDocker([...prefix, "node", "ls", "--format", "{{.ID}}|{{.Status}}"]);
+    if (nodes.exitCode !== 0 || !nodes.stdout.trim()) return false;
+    const ids = new Set<string>();
+    for (const line of nodes.stdout.split("\n")) {
+      const [rawId, status] = line.split("|");
+      const id = rawId?.trim().replace(/\s+\*$/, "");
+      if (!id || !/^[a-z0-9]{20,40}$/.test(id) || status !== "Ready" || ids.has(id)) return false;
+      ids.add(id);
+    }
+    const counts = new Map(expected.map(service => [service.name, 0]));
+    for (const id of ids) {
+      const tasks = await this.runDocker([...prefix, "node", "ps", id, "--no-trunc", "--format", "{{.Name}}|{{.DesiredState}}|{{.CurrentState}}"]);
+      if (tasks.exitCode !== 0) return false;
+      for (const line of tasks.stdout.split("\n").filter(Boolean)) {
+        const [name, desired, state] = line.split("|");
+        if (!name?.startsWith(stackName + "_")) continue;
+        if (!state || !desired) return false;
+        if (/^(?:Shutdown|Complete|Failed|Rejected|Remove)\b/i.test(state)) continue;
+        const service = name.split(".")[0];
+        if (!counts.has(service) || desired !== "Running" || !/^Running\b/.test(state)) return false;
+        counts.set(service, (counts.get(service) ?? 0) + 1);
+      }
+    }
+    return expected.every(service => counts.get(service.name) === service.desiredReplicas);
   }
 
   /**
