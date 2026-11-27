@@ -460,23 +460,24 @@ export class CapacityTelemetryService {
     );
     // A previous artifact may restore stopped or removed services. Its
     // declared demand is not necessarily represented by the running baseline.
-    if (input.rollbackSnapshot?.appGroup.runtimeState === "Running") {
-      for (const app of input.rollbackSnapshot.singleApps) {
-        if (app.runtimeState !== "Running" || app.desiredReplicas <= 0) continue;
-        const restored = BigInt(app.resources.memoryBytes) * BigInt(app.desiredReplicas);
-        const live = app.id ? currentByApp.get(app.id)?.hardLimitBytes ?? 0n : 0n;
-        if (restored > live) requestedPredictedBytes += restored - live;
+    const restorationDemand = (rollback?: CapacityDeploymentSnapshot) => {
+      let missing = 0n;
+      if (rollback?.appGroup.runtimeState === "Running") {
+        for (const app of rollback.singleApps) {
+          if (app.runtimeState !== "Running" || app.desiredReplicas <= 0) continue;
+          const restored = BigInt(app.resources.memoryBytes) * BigInt(app.desiredReplicas);
+          const live = app.id ? currentByApp.get(app.id)?.hardLimitBytes ?? 0n : 0n;
+          if (restored > live) missing += restored - live;
+        }
       }
-    }
+      return missing;
+    };
+    requestedPredictedBytes += restorationDemand(input.rollbackSnapshot);
     const inFlightPredictedBytes = input.inFlightSnapshots.reduce(
       (sum, snapshot) =>
         sum +
-        this.incrementalPrediction(
-          snapshot,
-          currentByApp,
-          evidenceByApp,
-          currentPredictionByApp,
-        ),
+        this.incrementalPrediction(snapshot, currentByApp, evidenceByApp, currentPredictionByApp) +
+        restorationDemand(snapshot.rollbackSnapshot),
       0n,
     );
 
