@@ -89,6 +89,21 @@ describe("Stage 15 capacity preflight", () => {
       ]);
   }
 
+  it("filters both CPU and memory supply to the same schedulable inventory", async () => {
+    platform();
+    await service.admitDeployment(tx, deploymentSnapshot());
+    const sql = queryRaw.mock.calls[1][0].sql as string;
+    for (const resource of ["availableCpuNano", "availableMemoryBytes"]) {
+      const start = sql.indexOf('SUM(r."' + resource + '") FILTER');
+      expect(start).toBeGreaterThanOrEqual(0);
+      const filter = sql.slice(start, sql.indexOf('), 0)', start));
+      expect(filter).toContain("r.\"status\" = 'Ready'");
+      expect(filter).toContain("r.\"availability\" = 'Active'");
+      expect(filter).toContain('r."maintenance" = false');
+      expect(filter).toContain("r.\"health\" IN ('Healthy', 'Degraded')");
+    }
+  });
+
   it("returns PlatformUnavailable when Swarm inventory has not been reconciled", async () => {
     queryRaw
       .mockResolvedValueOnce([{ locked: true }])
