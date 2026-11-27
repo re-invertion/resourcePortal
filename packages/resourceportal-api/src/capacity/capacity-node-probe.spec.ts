@@ -19,6 +19,10 @@ describe("capacity node probe parsers", () => {
     });
   });
 
+  it("rejects MemFree-only reports without actual MemAvailable", () => {
+    expect(parseMeminfo("MemTotal: 2048 kB\nMemFree: 1024 kB")).toBeNull();
+  });
+
   it("rejects impossible host memory reports", () => {
     expect(
       parseMeminfo([
