@@ -397,6 +397,30 @@ describe("worker collection completeness", () => {
       key === "WORKER_ID" ? "worker-1" : fallback,
   };
 
+  it("rejects a complete census that expires during collection", async () => {
+    const store = new MemoryStore();
+    const policy = new CapacityPolicyService(config as never);
+    policy.set({ maxTelemetryAgeSeconds: 30 });
+    const prisma = {
+      singleApp: { findMany: vi.fn().mockResolvedValue([{ id: "existing-app", actualReplicas: 1 }]) },
+      remoteLocation: { findMany: vi.fn().mockResolvedValue([{ swarmNodeId: nodeA }]) },
+    };
+    vi.useFakeTimers();
+    try {
+      const nodeProbe = {
+        collect: vi.fn(async () => {
+          await vi.advanceTimersByTimeAsync(30_001);
+          return [report(nodeA, 20, 1)];
+        }),
+      };
+      const telemetry = new CapacityTelemetryService(store as never, policy, prisma as never, nodeProbe as never);
+      await expect(telemetry.observeNow()).rejects.toThrow("expired during collection");
+      expect(store.points).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not append partial app telemetry when a schedulable node is missing", async () => {
     const store = new MemoryStore();
     const policy = new CapacityPolicyService(config as never);
