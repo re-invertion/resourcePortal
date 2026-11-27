@@ -274,6 +274,16 @@ describe("Stage 15 capacity preflight", () => {
     expect(result.success).toBe(phase === DeploymentPhase.Validating);
   });
 
+  it("rejects runtime start without a successful artifact when a failed stack may remain", async () => {
+    queryRaw.mockResolvedValueOnce([{ locked: true }]);
+    const target = deploymentSnapshot();
+    findDeployments.mockResolvedValueOnce([{
+      appGroupId: target.appGroup.id, version: 1, status: DeploymentStatus.RollbackFailed,
+      stackConfig: serializedSnapshot(target),
+    }]).mockResolvedValueOnce([]);
+    await expect(service.admitRuntimeStart(tx, { appGroupId: target.appGroup.id })).resolves.toMatchObject({ success: false, errorCode: "PlatformUnavailable" });
+  });
+
   it("does not exclude unresolved reservations belonging to the candidate group", async () => {
     platform({ cpuNano: 20_000_000_000n, memoryBytes: 3_072n });
     const target = deploymentSnapshot({ cpu: "1", memoryBytes: "2048" });
